@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Database & crypto
+*.db
+.crypto_salt
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment variables
+.env
+.env.local
+.env.production
+
+# Node.js (frontend)
+node_modules/
+frontend/dist/
+
+# Misc
+*.log
+.camoufox/
+.automation_logs/
+
+# Claude Code and MCP
+.claude/
+.playwright-mcp/
+
+# Backups
+*.sql
+*.bak
+
+# Browser Profiles
+backend/.browser_profiles/

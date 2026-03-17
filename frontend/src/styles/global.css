@@ -1,0 +1,77 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto',
+    'Helvetica Neue', Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: #f5f7fa;
+}
+
+code {
+  font-family: 'SF Mono', 'Consolas', 'Monaco', monospace;
+}
+
+#root {
+  height: 100vh;
+  width: 100vw;
+}
+
+/* 滚动条美化 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #a0a0a0;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* 可点击链接样式 */
+.clickable-link {
+  cursor: pointer;
+  transition: color 0.2s, opacity 0.2s;
+}
+
+.clickable-link:hover {
+  color: #1677ff !important;
+  opacity: 0.85;
+}
+
+/* 卡片悬浮效果 */
+.hover-card {
+  transition: border-color 0.2s;
+}
+.hover-card:hover {
+  border-color: #91caff !important;
+}
+
+/* 全局过渡动画 */
+.fade-in {
+  animation: fadeIn 0.3s ease-in-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

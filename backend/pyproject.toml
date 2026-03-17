@@ -1,0 +1,24 @@
+[project]
+name = "backend"
+version = "0.1.0"
+description = "Google Account Manager - Backend API"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "cryptography>=46.0.0",
+    "drissionpage>=4.1.1.2",
+    "httpx>=0.28.0",
+    "pyotp>=2.9.0",
+    "sqlalchemy>=2.0.0",
+    "psycopg2-binary>=2.9.9",
+    "fastapi>=0.135.1",
+    "uvicorn>=0.41.0",
+    "python-jose[cryptography]>=3.5.0",
+    "python-multipart>=0.0.22",
+    "bcrypt>=5.0.0",
+    "websockets>=16.0",
+]
+
+[[tool.uv.index]]
+url = "https://pypi.org/simple/"
+default = true
