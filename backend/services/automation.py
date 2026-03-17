@@ -356,6 +356,8 @@ class FamilyDiscoverResult:
     member_count: int = 0
     message: str = ""
     cookies_expired: bool = False  # cookies 是否已过期
+    subscription_status: str = ""  # 订阅状态: free / ultra
+    subscription_expiry: str = ""  # 订阅到期日, 如 "2026年3月23日"
 
     def to_dict(self):
         d = {
@@ -365,6 +367,7 @@ class FamilyDiscoverResult:
             "members": self.members,
             "member_count": self.member_count,
             "message": self.message,
+            "subscription_status": self.subscription_status,
         }
         if self.cookies_expired:
             d["cookies_expired"] = True
@@ -410,13 +413,27 @@ def discover_family_group_sync(page, on_step=None) -> FamilyDiscoverResult:
 
 
 def _discover_from_cookies(cookies: dict) -> FamilyDiscoverResult:
-    """纯 cookies 发现家庭组 (不需要浏览器)"""
+    """纯 cookies 发现家庭组 + 查询订阅状态 (不需要浏览器)"""
     try:
         with FamilyAPI(cookies) as api:
             members_info = api.query_members()
 
+            # 查询订阅状态 (无论是否有家庭组都查)
+            sub_status = ""
+            sub_expiry = ""
+            try:
+                sub_info = api.query_subscription()
+                sub_status = sub_info.get("status", "free")
+                sub_expiry = sub_info.get("renew_date", "")
+            except Exception as e:
+                logger.warning(f"[discover] 查询订阅状态失败: {e}")
+
             if not members_info["has_family"]:
-                return FamilyDiscoverResult(success=True, has_group=False, message="无家庭组")
+                return FamilyDiscoverResult(
+                    success=True, has_group=False, message="无家庭组",
+                    subscription_status=sub_status,
+                    subscription_expiry=sub_expiry,
+                )
 
             role = "manager" if members_info["is_admin"] else "member"
             members = []
@@ -440,6 +457,8 @@ def _discover_from_cookies(cookies: dict) -> FamilyDiscoverResult:
                 members=members,
                 member_count=members_info["member_count"],
                 message=f"家庭组: {role}, {members_info['member_count']} 成员",
+                subscription_status=sub_status,
+                subscription_expiry=sub_expiry,
             )
     except TokenError:
         return FamilyDiscoverResult(
@@ -459,17 +478,143 @@ def _discover_from_cookies(cookies: dict) -> FamilyDiscoverResult:
         return FamilyDiscoverResult(success=False, message=f"查询失败: {error_msg}")
 
 
+def _save_cookies_to_db(account_id: int, cookies: dict):
+    """保存 cookies 到数据库"""
+    import json as _json
+    try:
+        from models.database import SessionLocal
+        from models.orm import Account
+        db = SessionLocal()
+        try:
+            acc = db.query(Account).get(account_id)
+            if acc:
+                acc.cookies_json = _json.dumps(cookies)
+                acc.updated_at = datetime.now(timezone.utc)
+                db.commit()
+                logger.info(f"[discover] cookies 已更新 → account #{account_id}")
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning(f"[discover] 更新 cookies 失败: {e}")
+
+
+def _auto_login_and_get_cookies(
+    browser_profile_id: int,
+    email: str,
+    password: str,
+    totp_secret: str = "",
+    recovery_email: str = "",
+) -> Optional[dict]:
+    """自动启动浏览器 → 登录 → 获取 cookies → 关闭浏览器
+
+    注意: 强制关闭 headless 模式, 因为 Google 会检测并拦截 headless 登录。
+
+    Returns: cookies dict if success, None if failed
+    """
+    import asyncio as _aio
+
+    # 如果浏览器已在运行, 直接登录获取 cookies
+    already_running = browser_manager.is_running(browser_profile_id)
+
+    if not already_running:
+        # 启动浏览器 (强制 headless=False, Google 登录不支持无头模式)
+        try:
+            from models.database import SessionLocal
+            from models.orm import BrowserProfile
+            db = SessionLocal()
+            try:
+                profile = db.query(BrowserProfile).get(browser_profile_id)
+                if not profile:
+                    logger.warning(f"[auto-login] 找不到浏览器配置 profile_id={browser_profile_id}")
+                    return None
+            finally:
+                db.close()
+
+            # 同步环境中启动浏览器 (launch 是 async 方法)
+            loop = None
+            try:
+                loop = _aio.get_event_loop()
+            except RuntimeError:
+                loop = _aio.new_event_loop()
+                _aio.set_event_loop(loop)
+
+            if loop.is_running():
+                # 在运行中的 event loop 里, 用线程启动
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    future = pool.submit(lambda: _aio.run(browser_manager.launch(profile, headless=False)))
+                    future.result(timeout=30)
+            else:
+                loop.run_until_complete(browser_manager.launch(profile, headless=False))
+
+            logger.info(f"[auto-login] 浏览器已启动 profile_id={browser_profile_id}")
+        except Exception as e:
+            logger.error(f"[auto-login] 启动浏览器失败: {e}")
+            return None
+
+    # 登录
+    page = browser_manager.get_page(browser_profile_id)
+    if not page:
+        logger.error(f"[auto-login] 获取 page 失败 profile_id={browser_profile_id}")
+        return None
+
+    try:
+        ok = login_sync(page, email, password, totp_secret, recovery_email)
+        if not ok:
+            logger.warning(f"[auto-login] 登录失败 email={email}")
+            return None
+
+        logger.info(f"[auto-login] 登录成功 email={email}")
+        cookies = browser_manager.get_cookies(browser_profile_id)
+        if not cookies:
+            logger.warning(f"[auto-login] 登录成功但获取 cookies 为空")
+            return None
+
+        logger.info(f"[auto-login] 获取到 {len(cookies)} 个 cookies")
+        return cookies
+    except Exception as e:
+        logger.error(f"[auto-login] 登录异常: {e}")
+        return None
+    finally:
+        # 如果是我们启动的浏览器, 关闭它
+        if not already_running:
+            try:
+                if browser_manager.is_running(browser_profile_id):
+                    loop = None
+                    try:
+                        loop = _aio.get_event_loop()
+                    except RuntimeError:
+                        loop = _aio.new_event_loop()
+                        _aio.set_event_loop(loop)
+
+                    if loop.is_running():
+                        import concurrent.futures
+                        with concurrent.futures.ThreadPoolExecutor() as pool:
+                            future = pool.submit(lambda: _aio.run(browser_manager.stop(browser_profile_id)))
+                            future.result(timeout=15)
+                    else:
+                        loop.run_until_complete(browser_manager.stop(browser_profile_id))
+                    logger.info(f"[auto-login] 浏览器已关闭 profile_id={browser_profile_id}")
+            except Exception as e:
+                logger.warning(f"[auto-login] 关闭浏览器失败: {e}")
+
+
 def discover_family_by_cookies(
     account_id: int,
     saved_cookies_json: str,
     browser_profile_id: int = None,
+    email: str = "",
+    password: str = "",
+    totp_secret: str = "",
+    recovery_email: str = "",
 ) -> FamilyDiscoverResult:
-    """智能发现家庭组: 保存的 cookies → 浏览器 cookies → 报错
+    """智能发现家庭组: 保存的 cookies → 浏览器 cookies → 自动登录刷新 → 报错
 
     优先级:
       1. 用数据库保存的 cookies 直接查询 (不需要浏览器)
-      2. 保存的 cookies 为空或已过期, 且浏览器在运行 → 从浏览器获取 cookies 重试 + 更新数据库
-      3. 都失败 → 返回提示 "需要重新登录"
+      2. 保存的 cookies 为空或已过期, 且浏览器在运行 → 从浏览器获取 cookies 重试
+      3. 自动启动浏览器 → 登录 → 获取新 cookies → 重新查询
+      4. 都失败 → 返回提示 "需要重新登录"
     """
     import json as _json
 
@@ -488,42 +633,44 @@ def discover_family_by_cookies(
         if not result.cookies_expired:
             return result
         # cookies 过期, 继续尝试浏览器刷新
-        logger.info(f"[discover] account #{account_id} 保存的 cookies 已过期, 尝试浏览器刷新")
+        logger.info(f"[discover] account #{account_id} 保存的 cookies 已过期, 尝试刷新")
     else:
-        logger.info(f"[discover] account #{account_id} 没有保存的 cookies, 尝试从浏览器获取")
+        logger.info(f"[discover] account #{account_id} 没有保存的 cookies, 尝试获取")
 
-    # 2. 尝试从运行中的浏览器获取新 cookies (无论是空 cookies 还是过期 cookies 都走这里)
+    # 2. 尝试从运行中的浏览器获取新 cookies
     if browser_profile_id and browser_manager.is_running(browser_profile_id):
         fresh_cookies = browser_manager.get_cookies(browser_profile_id)
         if fresh_cookies:
-            logger.info(f"[discover] 从浏览器获取到 {len(fresh_cookies)} 个 cookies")
+            logger.info(f"[discover] 从运行中的浏览器获取到 {len(fresh_cookies)} 个 cookies")
             result = _discover_from_cookies(fresh_cookies)
             if result.success:
-                # 更新数据库中的 cookies
-                try:
-                    from models.database import SessionLocal
-                    from models.orm import Account
-                    db = SessionLocal()
-                    try:
-                        acc = db.query(Account).get(account_id)
-                        if acc:
-                            acc.cookies_json = _json.dumps(fresh_cookies)
-                            acc.updated_at = datetime.now(timezone.utc)
-                            db.commit()
-                            logger.info(f"[discover] 从浏览器刷新 cookies 成功, 已更新 account #{account_id}")
-                    finally:
-                        db.close()
-                except Exception as e:
-                    logger.warning(f"[discover] 更新 cookies 失败: {e}")
+                _save_cookies_to_db(account_id, fresh_cookies)
                 return result
-            # 浏览器 cookies 也不行
+            # 浏览器里的 cookies 也过期了 → 需要重新登录
+            if not result.cookies_expired:
+                return result
+            logger.info(f"[discover] 浏览器 cookies 也已过期, 尝试自动登录")
+
+    # 3. 自动登录刷新 cookies (需要账号凭证)
+    if browser_profile_id and email and password:
+        logger.info(f"[discover] account #{account_id} 尝试自动登录获取新 cookies")
+        fresh_cookies = _auto_login_and_get_cookies(
+            browser_profile_id, email, password, totp_secret, recovery_email
+        )
+        if fresh_cookies:
+            result = _discover_from_cookies(fresh_cookies)
+            if result.success:
+                _save_cookies_to_db(account_id, fresh_cookies)
+                return result
             return result
         else:
-            logger.warning(f"[discover] 浏览器在运行但获取 cookies 为空")
-    else:
-        logger.info(f"[discover] account #{account_id} 浏览器未运行 (profile_id={browser_profile_id})")
+            return FamilyDiscoverResult(
+                success=False,
+                message="自动登录失败，无法获取最新 cookies",
+                cookies_expired=True,
+            )
 
-    # 3. 没有可用的 cookies
+    # 4. 没有可用的 cookies，也没有凭证自动登录
     return FamilyDiscoverResult(
         success=False,
         message="未找到可用的登录信息，请先登录账号" if not cookies else "Cookies 已过期，请重新登录账号刷新",

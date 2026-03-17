@@ -84,8 +84,13 @@ class BrowserManager:
         except Exception:
             return False
 
-    async def launch(self, profile) -> BrowserInstance:
-        """启动 DrissionPage 浏览器实例"""
+    async def launch(self, profile, *, headless: Optional[bool] = None) -> BrowserInstance:
+        """启动 DrissionPage 浏览器实例
+
+        Args:
+            profile: BrowserProfile ORM 对象或 profile_id
+            headless: 强制指定无头模式, None 则读取数据库设置
+        """
         from models.orm import BrowserProfile
         profile_id = profile.id if isinstance(profile, BrowserProfile) else profile
         account_email = ""
@@ -96,12 +101,12 @@ class BrowserManager:
             raise RuntimeError(f"Profile {profile_id} 已在运行中")
 
         data_dir = self._get_data_dir(profile_id, account_email)
-        headless = self._is_headless_mode()
+        use_headless = headless if headless is not None else self._is_headless_mode()
 
         co = ChromiumOptions()
         co.set_argument("--lang", "en-US")
         co.set_argument(f"--user-data-dir={data_dir}")
-        if headless:
+        if use_headless:
             co.headless()
 
         # 代理

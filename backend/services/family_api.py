@@ -188,33 +188,44 @@ class FamilyAPI:
         }
 
     def query_subscription(self) -> dict:
-        """查询账号订阅状态 (免费/Pro/Ultra)
-        访问 https://myaccount.google.com/subscriptions 抓取信息
-        返回: {'status': 'free'|'pro'|'ultra', 'title': '...'}
+        """查询账号订阅状态 (免费/Ultra)
+
+        访问 https://myaccount.google.com/subscriptions 页面并解析 HTML。
+        页面为服务端渲染, 无 batchexecute RPC。
+
+        返回: {'status': 'free'|'ultra', 'title': '订阅名称'}
         """
-        resp = self.client.get(f"{BASE_URL}/subscriptions")
-        resp.raise_for_status()
+        try:
+            resp = self.client.get(f"{BASE_URL}/subscriptions")
+            resp.raise_for_status()
+        except Exception as e:
+            logger.warning(f"[subscription] 获取订阅页面失败: {e}")
+            return {"status": "free", "title": ""}
+
         html = resp.text
-
-        title = ""
         status = "free"
+        title = ""
+        renew_date = ""
 
-        # 匹配诸如 "Google One" 或 "Google Workspace" 这样的标题
-        # 以及特征字符串如 "AI Premium"
-
-        # 使用特征字符串进行粗略判断
-        if "AI Premium" in html:
+        # Ultra 特征: 页面含 "AI Ultra"
+        if "AI Ultra" in html:
             status = "ultra"
-            title = "Google One AI Premium"
-        elif "Google One" in html and "subscribed" in html.lower():
-            status = "pro"
-            title = "Google One"
-        # 其他检测可能需要更详细的正则
+            # 提取具体计划名, 如 "Google AI Ultra (30 TB)"
+            m = re.search(r'class="SeZS9d"[^>]*>([^<]*AI Ultra[^<]*)<', html)
+            title = m.group(1).strip() if m else "Google One AI Ultra"
+            # 提取续期日期, 如 "Renews on Mar 23, 2026" → "2026年3月23日"
+            m = re.search(r'Renews on ([A-Za-z]+ \d{1,2}, \d{4})', html)
+            if m:
+                from datetime import datetime as _dt
+                try:
+                    d = _dt.strptime(m.group(1), "%b %d, %Y")
+                    renew_date = f"{d.year}年{d.month}月{d.day}日"
+                except ValueError:
+                    renew_date = m.group(1)
 
-        return {
-            "status": status,
-            "title": title
-        }
+        return {"status": status, "title": title, "renew_date": renew_date}
+
+    def query_members(self) -> dict:
         """查询成员列表 (V2esPe)
 
         pending 判断逻辑 (基于实测):

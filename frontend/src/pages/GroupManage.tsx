@@ -278,28 +278,32 @@ const GroupManage: React.FC = () => {
                         </Dropdown>
                       </Flex>
 
-                      {/* 中部: 主号 + 成员数 */}
+                      {/* 中部: 订阅状态 + 成员数 */}
                       <Flex gap={6} align="center" wrap style={{ marginBottom: 8 }}>
-                        {group.main_account_email ? (
-                          <Tag
-                            color="gold"
-                            style={{ margin: 0, fontSize: 11, lineHeight: '18px', padding: '0 6px' }}
-                          >
-                            <CrownOutlined style={{ marginRight: 3 }} />
-                            {masked ? maskEmail(group.main_account_email) : group.main_account_email}
-                          </Tag>
-                        ) : (
-                          <Tag style={{ margin: 0, fontSize: 11, lineHeight: '18px', padding: '0 6px', color: '#bfbfbf' }}>
-                            未设置主号
-                          </Tag>
-                        )}
-                        {count > 0 && (
+                        {(() => {
+                          const mainAcc = (group.accounts || []).find(a => a.id === group.main_account_id);
+                          return (
+                            <>
+                              {mainAcc?.subscription_status === 'ultra' && (
+                                <Tag color="purple" style={{ margin: 0, fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>
+                                  Ultra
+                                </Tag>
+                              )}
+                              {mainAcc?.subscription_status === 'ultra' && mainAcc?.subscription_expiry && (
+                                <Tag color="default" style={{ margin: 0, fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>
+                                  重置于 {mainAcc.subscription_expiry}
+                                </Tag>
+                              )}
+                            </>
+                          );
+                        })()}
+                        {subAccounts.length > 0 && (
                           <Tag
                             color="default"
                             style={{ margin: 0, fontSize: 11, lineHeight: '18px', padding: '0 6px' }}
                           >
                             <UserOutlined style={{ marginRight: 3 }} />
-                            {count} 个账号
+                            {subAccounts.length} 个子号
                           </Tag>
                         )}
                       </Flex>

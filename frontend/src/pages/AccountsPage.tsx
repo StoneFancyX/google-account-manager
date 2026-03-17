@@ -265,6 +265,16 @@ const AccountsPage: React.FC = () => {
           >
             {masked ? maskEmail(email) : email}
           </Text>
+          {record.subscription_status === 'ultra' && (
+            <Tag color="purple" style={{ margin: 0, fontSize: 10, lineHeight: '16px', padding: '0 4px', cursor: 'default' }}>
+              Ultra
+            </Tag>
+          )}
+          {record.subscription_status === 'ultra' && record.subscription_expiry && (
+            <Tag color="default" style={{ margin: 0, fontSize: 10, lineHeight: '16px', padding: '0 4px', cursor: 'default' }}>
+              重置于 {record.subscription_expiry}
+            </Tag>
+          )}
           {record.is_family_owner && (
             <CrownOutlined style={{ color: '#faad14', fontSize: 12 }} />
           )}
@@ -285,7 +295,7 @@ const AccountsPage: React.FC = () => {
           )}
           {record.family_group_id && (record.family_member_count ?? 0) > 0 && (
             <Tag color="default" style={{ margin: 0, fontSize: 11 }}>
-              <TeamOutlined style={{ marginRight: 2 }} />{record.family_member_count}/6
+              <TeamOutlined style={{ marginRight: 2 }} />{Math.max((record.family_member_count ?? 0) - 1, 0)}/5
             </Tag>
           )}
         </Flex>

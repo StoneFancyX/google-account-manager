@@ -52,6 +52,8 @@ class Account(Base):
     group_name = Column(String, default="")
     family_group_id = Column(Integer, ForeignKey("family_groups.id", ondelete="SET NULL"), nullable=True)
     is_family_pending = Column(Boolean, default=False)  # 家庭组邀请待接受
+    subscription_status = Column(String, default="")  # 订阅状态: free / ultra
+    subscription_expiry = Column(String, default="")  # 订阅到期日, 如 "Mar 23, 2026"
     cookies_json = Column(Text, default="")  # 登录后保存的 cookies (JSON), 用于纯 HTTP 操作
     notes = Column(Text, default="")
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))

@@ -98,7 +98,7 @@ const getVisibleOps = (account: Account) => {
   const hasGroup = !!account.family_group_id;
   const isOwner = !!account.is_family_owner;
   const isMember = hasGroup && !isOwner;
-  const isFull = (account.family_member_count ?? 0) >= 6;
+  const isFull = (account.family_member_count ?? 0) >= 6; // 含管理员共 6 人
 
   return OPERATIONS.filter((op) => {
     if (!op.role || op.role === 'any') return true;
@@ -538,6 +538,16 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, onBack }) => {
                 <TeamOutlined style={{ marginRight: 3 }} />{Math.max(memberCount - 1, 0)}/5
               </Tag>
             )}
+            {record.subscription_status === 'ultra' && (
+              <Tag color="purple" style={{ margin: 0, fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>
+                Ultra
+              </Tag>
+            )}
+            {record.subscription_status === 'ultra' && record.subscription_expiry && (
+              <Tag color="default" style={{ margin: 0, fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>
+                重置于 {record.subscription_expiry}
+              </Tag>
+            )}
           </Flex>
 
           {/* 备注 */}
@@ -742,7 +752,7 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, onBack }) => {
           {group.name}
         </Text>
         <Tag color="default" style={{ fontSize: 12 }}>
-          {(group.accounts || []).length} 个账号
+          {Math.max((group.accounts || []).length - 1, 0)} 个子号
         </Tag>
         {group.notes && (
           <Text type="secondary" style={{ fontSize: 12 }}>{group.notes}</Text>

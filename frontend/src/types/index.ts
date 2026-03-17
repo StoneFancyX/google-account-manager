@@ -13,6 +13,8 @@ export interface Account {
   is_family_owner?: boolean;
   is_family_pending?: boolean;
   family_member_count?: number;
+  subscription_status?: string;
+  subscription_expiry?: string;
   notes?: string;
   created_at?: string;
   updated_at?: string;

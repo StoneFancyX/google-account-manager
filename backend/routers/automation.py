@@ -97,6 +97,56 @@ def _save_cookies(account_id: int, profile_id: int):
         logger.warning(f"[cookies] 保存失败: {e}")
 
 
+def _save_subscription_status(account_id: int, subscription_status: str, subscription_expiry: str = ""):
+    """保存订阅状态到数据库，主号 Ultra 自动传播给同组所有子号"""
+    if not subscription_status:
+        return
+    try:
+        db = SessionLocal()
+        try:
+            account = db.query(Account).get(account_id)
+            if not account:
+                return
+            changed = False
+            if account.subscription_status != subscription_status:
+                account.subscription_status = subscription_status
+                changed = True
+            if subscription_expiry and account.subscription_expiry != subscription_expiry:
+                account.subscription_expiry = subscription_expiry
+                changed = True
+            if changed:
+                account.updated_at = datetime.now(timezone.utc)
+                db.commit()
+                logger.info(f"[subscription] account #{account_id} → {subscription_status} {subscription_expiry}")
+
+            # 主号 Ultra → 传播给同组所有子号
+            if subscription_status == "ultra" and account.family_group_id:
+                group = db.query(Group).get(account.family_group_id)
+                if group and group.main_account_id == account.id:
+                    members = (
+                        db.query(Account)
+                        .filter(Account.family_group_id == group.id, Account.id != account.id)
+                        .all()
+                    )
+                    for m in members:
+                        m_changed = False
+                        if m.subscription_status != subscription_status:
+                            m.subscription_status = subscription_status
+                            m_changed = True
+                        if subscription_expiry and m.subscription_expiry != subscription_expiry:
+                            m.subscription_expiry = subscription_expiry
+                            m_changed = True
+                        if m_changed:
+                            m.updated_at = datetime.now(timezone.utc)
+                    db.commit()
+                    if members:
+                        logger.info(f"[subscription] Ultra 已传播给 {len(members)} 个子号")
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning(f"[subscription] 保存失败: {e}")
+
+
 # ---- 家庭组 → 分组自动同步 ----
 
 def _sync_group_after_action(action: str, account_id: int, success: bool, result_msg: str, extra: dict = None):
@@ -133,45 +183,65 @@ def _sync_group_after_action(action: str, account_id: int, success: bool, result
 
         elif action == "family-accept":
             # 接受邀请 → 当前账号加入邀请方的分组
+            joined_group_id = None
             if account.family_group_id:
                 logger.info(f"[sync_group] 账号 {account.email} 已在分组 {account.family_group_id} 中, 跳过")
-                return
-            # 方式1: extra 中指定了 group_id (替换成员场景)
-            group_id = (extra or {}).get("group_id")
-            if group_id:
-                group = db.query(Group).get(group_id)
-                if group:
-                    account.family_group_id = group_id
-                    account.updated_at = datetime.now(timezone.utc)
-                    db.commit()
-                    logger.info(f"[sync_group] 已将 {account.email} 加入分组 #{group_id}")
-                    return
-            # 方式2: extra 中指定了 manager_account_id (管理员账号ID)
-            manager_id = (extra or {}).get("manager_account_id")
-            if manager_id:
-                manager = db.query(Account).get(manager_id)
-                if manager and manager.family_group_id:
-                    account.family_group_id = manager.family_group_id
-                    account.updated_at = datetime.now(timezone.utc)
-                    db.commit()
-                    logger.info(f"[sync_group] 已将 {account.email} 加入管理员 {manager.email} 的分组 #{manager.family_group_id}")
-                    return
-            logger.info(f"[sync_group] 接受邀请: 账号 {account.email} 无法自动关联分组 (未提供 group_id 或 manager_account_id)")
-            # 方式3: 兜底 - 查找有管理员且成员未满的分组
-            from sqlalchemy import func
-            groups = db.query(Group).filter(Group.main_account_id.isnot(None)).all()
-            for g in groups:
-                member_count = db.query(func.count(Account.id)).filter(Account.family_group_id == g.id).scalar()
-                if member_count < 6:  # Google 家庭组最多 6 人 (含管理员)
-                    account.family_group_id = g.id
-                    account.updated_at = datetime.now(timezone.utc)
-                    db.commit()
-                    logger.info(f"[sync_group] 兜底: 已将 {account.email} 加入分组 #{g.id} ({g.name})")
-                    return
-            logger.warning(f"[sync_group] 接受邀请: 未找到可加入的分组")
+                joined_group_id = account.family_group_id
+            else:
+                # 方式1: extra 中指定了 group_id (替换成员场景)
+                group_id = (extra or {}).get("group_id")
+                if group_id:
+                    group = db.query(Group).get(group_id)
+                    if group:
+                        account.family_group_id = group_id
+                        account.updated_at = datetime.now(timezone.utc)
+                        db.commit()
+                        joined_group_id = group_id
+                        logger.info(f"[sync_group] 已将 {account.email} 加入分组 #{group_id}")
+
+                # 方式2: extra 中指定了 manager_account_id (管理员账号ID)
+                if not joined_group_id:
+                    manager_id = (extra or {}).get("manager_account_id")
+                    if manager_id:
+                        manager = db.query(Account).get(manager_id)
+                        if manager and manager.family_group_id:
+                            account.family_group_id = manager.family_group_id
+                            account.updated_at = datetime.now(timezone.utc)
+                            db.commit()
+                            joined_group_id = manager.family_group_id
+                            logger.info(f"[sync_group] 已将 {account.email} 加入管理员 {manager.email} 的分组 #{manager.family_group_id}")
+
+                # 方式3: 兜底 - 查找有管理员且成员未满的分组
+                if not joined_group_id:
+                    logger.info(f"[sync_group] 接受邀请: 账号 {account.email} 无法自动关联分组 (未提供 group_id 或 manager_account_id)")
+                    from sqlalchemy import func
+                    groups = db.query(Group).filter(Group.main_account_id.isnot(None)).all()
+                    for g in groups:
+                        member_count = db.query(func.count(Account.id)).filter(Account.family_group_id == g.id).scalar()
+                        if member_count < 6:
+                            account.family_group_id = g.id
+                            account.updated_at = datetime.now(timezone.utc)
+                            db.commit()
+                            joined_group_id = g.id
+                            logger.info(f"[sync_group] 兜底: 已将 {account.email} 加入分组 #{g.id} ({g.name})")
+                            break
+                    if not joined_group_id:
+                        logger.warning(f"[sync_group] 接受邀请: 未找到可加入的分组")
+
+            # 继承主号 Ultra 订阅状态
+            if joined_group_id:
+                group = db.query(Group).get(joined_group_id)
+                if group and group.main_account_id:
+                    main_acc = db.query(Account).get(group.main_account_id)
+                    if main_acc and main_acc.subscription_status == "ultra":
+                        account.subscription_status = main_acc.subscription_status
+                        account.subscription_expiry = main_acc.subscription_expiry or ""
+                        account.updated_at = datetime.now(timezone.utc)
+                        db.commit()
+                        logger.info(f"[sync_group] {account.email} 继承主号 Ultra 订阅")
 
         elif action == "family-remove":
-            # 移除成员 → 从分组中移除被移除的账号
+            # 移除成员 → 从分组中移除被移除的账号 + 清除订阅状态
             member_email = (extra or {}).get("member_email", "")
             if not member_email:
                 return
@@ -179,9 +249,11 @@ def _sync_group_after_action(action: str, account_id: int, success: bool, result
             if member and member.family_group_id:
                 old_group_id = member.family_group_id
                 member.family_group_id = None
+                member.subscription_status = ""
+                member.subscription_expiry = ""
                 member.updated_at = datetime.now(timezone.utc)
                 db.commit()
-                logger.info(f"[sync_group] 已将 {member_email} 从分组 #{old_group_id} 中移除")
+                logger.info(f"[sync_group] 已将 {member_email} 从分组 #{old_group_id} 中移除, 清除订阅状态")
 
         elif action == "family-leave":
             # 退出/删除家庭组
@@ -193,19 +265,21 @@ def _sync_group_after_action(action: str, account_id: int, success: bool, result
                 return
 
             if group.main_account_id == account.id:
-                # 管理员删除 → 删除整个分组, 清除所有成员的 family_group_id
+                # 管理员删除 → 删除整个分组, 清除所有成员的 family_group_id + 订阅状态
                 db.query(Account).filter(Account.family_group_id == group_id).update(
-                    {"family_group_id": None, "updated_at": datetime.now(timezone.utc)}
+                    {"family_group_id": None, "subscription_status": "", "subscription_expiry": "", "updated_at": datetime.now(timezone.utc)}
                 )
                 db.delete(group)
                 db.commit()
-                logger.info(f"[sync_group] 管理员 {account.email} 删除了分组 #{group_id}")
+                logger.info(f"[sync_group] 管理员 {account.email} 删除了分组 #{group_id}, 已清除所有成员订阅状态")
             else:
-                # 成员退出 → 仅移除自己
+                # 成员退出 → 仅移除自己 + 清除订阅状态
                 account.family_group_id = None
+                account.subscription_status = ""
+                account.subscription_expiry = ""
                 account.updated_at = datetime.now(timezone.utc)
                 db.commit()
-                logger.info(f"[sync_group] 成员 {account.email} 退出了分组 #{group_id}")
+                logger.info(f"[sync_group] 成员 {account.email} 退出了分组 #{group_id}, 已清除订阅状态")
 
     except Exception as e:
         logger.error(f"[sync_group] 同步分组失败: {e}")
@@ -232,13 +306,15 @@ def _sync_group_from_discover(account_id: int, discover_result):
             return
 
         if not discover_result.has_group:
-            # 没有家庭组 → 清除关联
+            # 没有家庭组 → 清除关联 + 订阅状态
             if account.family_group_id:
                 old_gid = account.family_group_id
                 account.family_group_id = None
+                account.subscription_status = ""
+                account.subscription_expiry = ""
                 account.updated_at = datetime.now(timezone.utc)
                 db.commit()
-                logger.info(f"[discover_sync] {account.email} 已不在家庭组, 清除分组 #{old_gid}")
+                logger.info(f"[discover_sync] {account.email} 已不在家庭组, 清除分组 #{old_gid} + 订阅状态")
             else:
                 logger.info(f"[discover_sync] {account.email} 无家庭组, 无需更新")
             return
@@ -342,6 +418,8 @@ def _sync_members_from_discover(db, group_id: int, members: list):
                 logger.info(f"[discover_sync] 成员 {old_acc.email} 不在 discover 结果中, 从分组 #{group_id} 移除")
                 old_acc.family_group_id = None
                 old_acc.is_family_pending = False
+                old_acc.subscription_status = ""
+                old_acc.subscription_expiry = ""
                 old_acc.updated_at = datetime.now(timezone.utc)
         db.commit()
 
@@ -508,7 +586,7 @@ async def leave_family_group(req: AccountActionRequest, db: Session = Depends(ge
 
 @router.post("/family/discover")
 async def discover_family(req: AccountActionRequest, db: Session = Depends(get_db)):
-    """同步家庭组状态 (优先用保存的 cookies, 不需要浏览器)"""
+    """同步家庭组状态 (优先用保存的 cookies, cookies 过期自动登录刷新)"""
     account = db.query(Account).get(req.account_id)
     if not account:
         raise HTTPException(status_code=404, detail="账号不存在")
@@ -521,6 +599,12 @@ async def discover_family(req: AccountActionRequest, db: Session = Depends(get_d
     )
     browser_profile_id = profile.id if profile else None
 
+    # 解密凭证 (用于 cookies 过期时自动登录)
+    email = account.email
+    password = _decrypt(account.password)
+    totp_secret = _decrypt(account.totp_secret) or ""
+    recovery_email = _decrypt(account.recovery_email) or ""
+
     loop = asyncio.get_event_loop()
     result = await loop.run_in_executor(
         None,
@@ -528,11 +612,17 @@ async def discover_family(req: AccountActionRequest, db: Session = Depends(get_d
         req.account_id,
         account.cookies_json or "",
         browser_profile_id,
+        email,
+        password,
+        totp_secret,
+        recovery_email,
     )
 
     # 同步分组关系
     if result.success:
         _sync_group_from_discover(req.account_id, result)
+        # 保存订阅状态
+        _save_subscription_status(req.account_id, result.subscription_status, result.subscription_expiry)
 
     return result.to_dict()
 
@@ -665,7 +755,7 @@ async def automation_websocket(ws: WebSocket):
                     run_leave_family_group(profile_id, password, totp_secret, on_step=on_step)
                 )
             elif action == "family-discover":
-                # 发现家庭组关系 → 优先用保存的 cookies (不需要浏览器)
+                # 发现家庭组关系 → cookies 过期自动登录刷新
                 db_d = SessionLocal()
                 try:
                     acc_d = db_d.query(Account).get(account_id)
@@ -680,10 +770,15 @@ async def automation_websocket(ws: WebSocket):
                     account_id,
                     saved_cookies or "",
                     profile_id,
+                    email,
+                    password,
+                    totp_secret,
+                    recovery_email,
                 )
 
                 if dr and dr.success:
                     _sync_group_from_discover(account_id, dr)
+                    _save_subscription_status(account_id, dr.subscription_status, dr.subscription_expiry)
                 await ws.send_json({
                     "type": "result",
                     "success": dr.success if dr else False,

@@ -41,6 +41,8 @@ class AccountService:
             "is_family_owner": is_family_owner,
             "is_family_pending": bool(account.is_family_pending),
             "family_member_count": family_member_count,
+            "subscription_status": account.subscription_status or "",
+            "subscription_expiry": account.subscription_expiry or "",
             "notes": account.notes or "",
             "created_at": account.created_at.isoformat() if account.created_at else None,
             "updated_at": account.updated_at.isoformat() if account.updated_at else None,
