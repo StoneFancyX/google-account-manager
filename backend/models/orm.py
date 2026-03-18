@@ -55,6 +55,7 @@ class Account(Base):
     subscription_status = Column(String, default="")  # 订阅状态: free / ultra
     subscription_expiry = Column(String, default="")  # 订阅到期日, 如 "Mar 23, 2026"
     cookies_json = Column(Text, default="")  # 登录后保存的 cookies (JSON), 用于纯 HTTP 操作
+    oauth_credential_json = Column(Text, default="")  # OAuth 认证 JSON (antigravity 格式)
     notes = Column(Text, default="")
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))

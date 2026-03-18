@@ -53,3 +53,18 @@ export interface DiscoverResult {
 
 export const discoverFamily = (accountId: number) =>
   client.post<DiscoverResult>(`${BASE}/family/discover`, { account_id: accountId });
+
+/** 获取 OAuth 凭证 JSON */
+export const getOAuthCredential = (accountId: number) =>
+  client.get<Record<string, any>>(`${BASE}/oauth/credential/${accountId}`);
+
+/** 下载 OAuth 凭证文件 */
+export const downloadOAuthCredential = async (accountId: number) => {
+  const res = await client.get<Blob>(`${BASE}/oauth/credential/${accountId}/download`, {
+    responseType: 'blob',
+  });
+  const disposition = (res.headers['content-disposition'] as string) || '';
+  const match = disposition.match(/filename="?(.+?)"?$/i);
+  const filename = match ? decodeURIComponent(match[1]) : 'credential.json';
+  return { blob: res.data, filename };
+};

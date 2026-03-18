@@ -104,7 +104,7 @@ class StepTracker:
             except Exception:
                 pass
 
-    def result(self, success: bool, message: str, step: str = "done") -> "AutomationResult":
+    def result(self, success: bool, message: str, step: str = "done", extra: dict = None) -> "AutomationResult":
         total_ms = int((time.time() - self._start_time) * 1000)
         logger.info(f"[{self.task_name}] {'[OK]' if success else '[FAIL]'} {message} ({total_ms}ms)")
 
@@ -114,6 +114,7 @@ class StepTracker:
             step=step,
             steps=[s.to_dict() for s in self.steps],
             duration_ms=total_ms,
+            extra=extra or {},
         )
 
         if self.on_step:
@@ -138,15 +139,19 @@ class AutomationResult:
     step: str = ""
     steps: list = field(default_factory=list)
     duration_ms: int = 0
+    extra: dict = field(default_factory=dict)
 
     def to_dict(self):
-        return {
+        d = {
             "success": self.success,
             "message": self.message,
             "step": self.step,
             "steps": self.steps,
             "duration_ms": self.duration_ms,
         }
+        if self.extra:
+            d["extra"] = self.extra
+        return d
 
 
 # ============================================================
@@ -765,3 +770,15 @@ async def run_discover_family_group(profile_id: int, on_step=None) -> FamilyDisc
         return FamilyDiscoverResult(success=False, message="浏览器未启动")
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, discover_family_group_sync, page, on_step)
+
+
+async def run_oauth(profile_id: int, on_step=None, password: str = "", totp_secret: str = "") -> AutomationResult:
+    """在已登录浏览器中自动完成 OAuth 授权"""
+    page = browser_manager.get_page(profile_id)
+    if not page:
+        return AutomationResult(success=False, message="浏览器未启动", step="init")
+    from services.oauth import oauth_sync
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        None, oauth_sync, page, on_step, password, totp_secret
+    )

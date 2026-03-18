@@ -39,6 +39,9 @@ import {
   EyeOutlined,
   EyeInvisibleOutlined,
   ClockCircleOutlined,
+  SafetyCertificateOutlined,
+  DownloadOutlined,
+  FileTextOutlined,
 } from '@ant-design/icons';
 import {
   getGroup,
@@ -52,6 +55,8 @@ import {
   clearBrowserData,
   discoverFamily,
   getAccounts,
+  getOAuthCredential,
+  downloadOAuthCredential,
 } from '@/api';
 import type { Account, Group } from '@/types';
 import { maskEmail } from '@/utils/mask';
@@ -399,6 +404,38 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, onBack }) => {
     }
   };
 
+  const handleOAuth = (accountId: number) => {
+    if (!browserRunning.has(accountId)) {
+      msg.warning('请先启动浏览器');
+      return;
+    }
+    executeViaWs(accountId, 'oauth', {}, 'oauth');
+  };
+
+  const handleCopyOAuthJson = async (accountId: number) => {
+    try {
+      const { data } = await getOAuthCredential(accountId);
+      await navigator.clipboard.writeText(JSON.stringify(data, null, 2));
+      msg.success('OAuth JSON 已复制到剪贴板');
+    } catch (error: any) {
+      msg.error(error.response?.data?.detail || '获取 OAuth 凭证失败');
+    }
+  };
+
+  const handleDownloadOAuth = async (accountId: number) => {
+    try {
+      const { blob, filename } = await downloadOAuthCredential(accountId);
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      msg.success('下载成功');
+    } catch (error: any) {
+      msg.error(error.response?.data?.detail || '下载失败');
+    }
+  };
+
   // 以下代码用于兼容，但不再被右上角按钮触发
   const handleAddMember = async () => {
     try {
@@ -645,6 +682,46 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, onBack }) => {
                   disabled={isRunning}
                   icon={<DeleteOutlined style={{ color: isRunning ? '#d9d9d9' : '#ff4d4f' }} />}
                   onClick={() => handleClearBrowserData(record.id)}
+                  style={{ padding: '0 6px' }}
+                />
+              </Tooltip>
+            )}
+
+            {/* OAuth 授权按钮 */}
+            <Tooltip title="OAuth 授权">
+              <Button
+                type="text"
+                size="small"
+                disabled={isAnyRunning || !isRunning}
+                icon={(isThisAccountRunning && runningOpKey === 'oauth')
+                  ? <LoadingOutlined style={{ color: '#1677ff' }} />
+                  : <SafetyCertificateOutlined style={{ color: (isAnyRunning || !isRunning) ? '#d9d9d9' : '#722ed1' }} />}
+                onClick={() => handleOAuth(record.id)}
+                style={{ padding: '0 6px' }}
+              />
+            </Tooltip>
+
+            {/* OAuth 复制 JSON 按钮 */}
+            {record.has_oauth_credential && (
+              <Tooltip title="复制 OAuth JSON">
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<FileTextOutlined style={{ color: '#1890ff' }} />}
+                  onClick={() => handleCopyOAuthJson(record.id)}
+                  style={{ padding: '0 6px' }}
+                />
+              </Tooltip>
+            )}
+
+            {/* OAuth 下载按钮 */}
+            {record.has_oauth_credential && (
+              <Tooltip title="下载 OAuth 凭证">
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<DownloadOutlined style={{ color: '#13c2c2' }} />}
+                  onClick={() => handleDownloadOAuth(record.id)}
                   style={{ padding: '0 6px' }}
                 />
               </Tooltip>

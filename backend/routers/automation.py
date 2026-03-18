@@ -6,6 +6,7 @@ import queue
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Depends, WebSocket, WebSocketDisconnect
+from fastapi.responses import Response
 from pydantic import BaseModel
 from typing import Optional
 from sqlalchemy.orm import Session
@@ -23,6 +24,7 @@ from services.automation import (
     run_leave_family_group,
     run_discover_family_group,
     discover_family_by_cookies,
+    run_oauth,
 )
 
 logger = logging.getLogger(__name__)
@@ -95,6 +97,26 @@ def _save_cookies(account_id: int, profile_id: int):
             db.close()
     except Exception as e:
         logger.warning(f"[cookies] 保存失败: {e}")
+
+
+def _save_oauth_credential(account_id: int, credential: dict):
+    """保存 OAuth 认证 JSON 到数据库"""
+    try:
+        db = SessionLocal()
+        try:
+            account = db.query(Account).get(account_id)
+            if account:
+                # 如果凭证中没有 email, 用账号的 email
+                if "email" not in credential:
+                    credential["email"] = account.email
+                account.oauth_credential_json = json.dumps(credential)
+                account.updated_at = datetime.now(timezone.utc)
+                db.commit()
+                logger.info(f"[oauth] 已保存 OAuth 凭证 → account #{account_id}")
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning(f"[oauth] 保存 OAuth 凭证失败: {e}")
 
 
 def _save_subscription_status(account_id: int, subscription_status: str, subscription_expiry: str = ""):
@@ -627,6 +649,38 @@ async def discover_family(req: AccountActionRequest, db: Session = Depends(get_d
     return result.to_dict()
 
 
+# ---- OAuth 凭证 API ----
+
+@router.get("/oauth/credential/{account_id}")
+async def get_oauth_credential(account_id: int, db: Session = Depends(get_db)):
+    """获取账号的 OAuth 认证 JSON"""
+    account = db.query(Account).get(account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="账号不存在")
+    if not account.oauth_credential_json:
+        raise HTTPException(status_code=404, detail="该账号暂无 OAuth 凭证")
+    return json.loads(account.oauth_credential_json)
+
+
+@router.get("/oauth/credential/{account_id}/download")
+async def download_oauth_credential(account_id: int, db: Session = Depends(get_db)):
+    """下载 OAuth 认证 JSON 文件"""
+    account = db.query(Account).get(account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="账号不存在")
+    if not account.oauth_credential_json:
+        raise HTTPException(status_code=404, detail="该账号暂无 OAuth 凭证")
+
+    email = account.email or "unknown"
+    filename = f"antigravity-{email}.json"
+    content = account.oauth_credential_json
+    return Response(
+        content=content,
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 # ============================================================
 # WebSocket 实时操作 endpoint
 # ============================================================
@@ -786,6 +840,10 @@ async def automation_websocket(ws: WebSocket):
                     "duration_ms": 0,
                 })
                 continue
+            elif action == "oauth":
+                task = asyncio.ensure_future(
+                    run_oauth(profile_id, on_step=on_step, password=password, totp_secret=totp_secret)
+                )
             elif action == "family-replace":
                 old_email = data.get("old_email", "")
                 new_email = data.get("new_email", "")
@@ -979,6 +1037,9 @@ async def automation_websocket(ws: WebSocket):
                 result = task.result()
                 if result and result.success:
                     _save_cookies(account_id, profile_id)
+                    # OAuth 成功后保存凭证
+                    if action == "oauth" and hasattr(result, 'extra') and result.extra and result.extra.get("credential"):
+                        _save_oauth_credential(account_id, result.extra["credential"])
                 if result and action in ("family-create", "family-accept", "family-remove", "family-leave"):
                     extra_data = {}
                     if action == "family-remove":

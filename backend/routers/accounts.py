@@ -211,7 +211,7 @@ async def get_totp_code(account_id: int, svc: AccountService = Depends(get_accou
         raise HTTPException(status_code=400, detail="该账号未设置2FA密钥")
 
     try:
-        totp = pyotp.TOTP(account["totp_secret"])
+        totp = pyotp.TOTP(account["totp_secret"].replace(' ', ''))
         code = totp.now()
         remaining = 30 - (int(time.time()) % 30)
         return {"code": code, "remaining": remaining, "formatted": f"{code[:3]} {code[3:]}"}

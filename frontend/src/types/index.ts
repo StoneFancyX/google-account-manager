@@ -15,6 +15,7 @@ export interface Account {
   family_member_count?: number;
   subscription_status?: string;
   subscription_expiry?: string;
+  has_oauth_credential?: boolean;
   notes?: string;
   created_at?: string;
   updated_at?: string;

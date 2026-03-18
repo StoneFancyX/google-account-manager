@@ -104,6 +104,7 @@ class BrowserManager:
         use_headless = headless if headless is not None else self._is_headless_mode()
 
         co = ChromiumOptions()
+        co.auto_port()  # 每个实例使用独立端口，避免接管已有浏览器
         co.set_argument("--lang", "en-US")
         co.set_argument(f"--user-data-dir={data_dir}")
         if use_headless:
@@ -275,7 +276,7 @@ def login_sync(page, email: str, password: str, totp_secret: str = "",
 
     # TOTP
     if "challenge" in page.url and totp_secret:
-        code = pyotp.TOTP(totp_secret).now()
+        code = pyotp.TOTP(totp_secret.replace(' ', '')).now()
         if "challenge/selection" in page.url:
             opt = page.ele("text:Authenticator", timeout=3)
             if opt:
@@ -337,7 +338,7 @@ def handle_reauth_sync(page, password: str, totp_secret: str = "") -> Optional[s
 
     # TOTP
     if "challenge" in page.url and totp_secret:
-        code = pyotp.TOTP(totp_secret).now()
+        code = pyotp.TOTP(totp_secret.replace(' ', '')).now()
         if "challenge/selection" in page.url:
             opt = page.ele("text:Authenticator", timeout=3)
             if opt:
