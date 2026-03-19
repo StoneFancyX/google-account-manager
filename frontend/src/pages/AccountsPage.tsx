@@ -317,6 +317,18 @@ const AccountsPage: React.FC = () => {
       },
     },
     {
+      title: '地区',
+      dataIndex: 'country_cn',
+      key: 'country',
+      width: 80,
+      render: (_: string | null, record: Account) => {
+        const cn = record.country_cn;
+        const en = record.country;
+        if (!cn && !en) return null;
+        return <Tooltip title={en}><Text style={{ fontSize: 12 }}>{cn || en}</Text></Tooltip>;
+      },
+    },
+    {
       title: '标签',
       dataIndex: 'tags',
       key: 'tags',

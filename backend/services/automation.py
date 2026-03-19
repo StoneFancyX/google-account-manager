@@ -237,7 +237,8 @@ def accept_family_invite_sync(page, on_step=None) -> AutomationResult:
             if result["success"]:
                 return tracker.result(True, "邀请已接受")
             else:
-                return tracker.result(False, "接受邀请失败", step="accept")
+                error = result.get("error", "接受邀请失败")
+                return tracker.result(False, error, step="accept")
     except NoInvitationError:
         return tracker.result(False, "没有待接受的邀请", step="no_invite")
     except (TokenError, RPCError) as e:
@@ -248,7 +249,7 @@ def accept_family_invite_sync(page, on_step=None) -> AutomationResult:
 
 def remove_family_member_sync(page, member_email: str, password: str = "",
                               totp_secret: str = "", on_step=None) -> AutomationResult:
-    """移除家庭组成员 (需要 rapt)"""
+    """移除家庭组成员 (已接受成员需要 rapt, 未接受成员撤销邀请)"""
     tracker = StepTracker("remove_member", on_step)
 
     tracker.step("提取 cookies", "info")
@@ -256,7 +257,7 @@ def remove_family_member_sync(page, member_email: str, password: str = "",
 
     try:
         with FamilyAPI(cookies) as api:
-            # 先查成员列表, 找到 user_id
+            # 先查成员列表, 找到目标
             tracker.step("查询成员列表", "info")
             members_info = api.query_members()
             if not members_info["has_family"]:
@@ -271,8 +272,23 @@ def remove_family_member_sync(page, member_email: str, password: str = "",
             if not target:
                 return tracker.result(False, f"未找到成员: {member_email}", step="find_member")
 
+            tracker.step("找到成员", "ok", f"{target['name']} ({target['user_id']})")
+
+            # pending 成员: 撤销邀请 (不需要 rapt)
+            if target.get("pending"):
+                invitation_id = target.get("invitation_id")
+                if not invitation_id:
+                    return tracker.result(False, f"未找到邀请 ID: {member_email}", step="no_invite_id")
+
+                tracker.step("撤销邀请", "info", member_email)
+                ok = api.cancel_invite(invitation_id)
+                if ok:
+                    return tracker.result(True, f"已撤销邀请: {member_email}")
+                else:
+                    return tracker.result(False, f"撤销邀请失败: {member_email}", step="cancel")
+
+            # 已接受成员: 需要 rapt 移除
             member_user_id = target["user_id"]
-            tracker.step("找到成员", "ok", f"{target['name']} ({member_user_id})")
 
             # 获取 rapt
             tracker.step("密码重验证", "info", "获取 rapt token")
@@ -363,6 +379,8 @@ class FamilyDiscoverResult:
     cookies_expired: bool = False  # cookies 是否已过期
     subscription_status: str = ""  # 订阅状态: free / ultra
     subscription_expiry: str = ""  # 订阅到期日, 如 "2026年3月23日"
+    country: str = ""  # 账号所属国家/地区 (英文)
+    country_cn: str = ""  # 中文国家名
 
     def to_dict(self):
         d = {
@@ -418,7 +436,7 @@ def discover_family_group_sync(page, on_step=None) -> FamilyDiscoverResult:
 
 
 def _discover_from_cookies(cookies: dict) -> FamilyDiscoverResult:
-    """纯 cookies 发现家庭组 + 查询订阅状态 (不需要浏览器)"""
+    """纯 cookies 发现家庭组 + 查询订阅状态 + 查询地区 (不需要浏览器)"""
     try:
         with FamilyAPI(cookies) as api:
             members_info = api.query_members()
@@ -433,11 +451,23 @@ def _discover_from_cookies(cookies: dict) -> FamilyDiscoverResult:
             except Exception as e:
                 logger.warning(f"[discover] 查询订阅状态失败: {e}")
 
+            # 查询账号地区
+            country = ""
+            country_cn = ""
+            try:
+                country_info = api.query_country()
+                country = country_info.get("country", "")
+                country_cn = country_info.get("country_cn", "")
+            except Exception as e:
+                logger.warning(f"[discover] 查询地区失败: {e}")
+
             if not members_info["has_family"]:
                 return FamilyDiscoverResult(
                     success=True, has_group=False, message="无家庭组",
                     subscription_status=sub_status,
                     subscription_expiry=sub_expiry,
+                    country=country,
+                    country_cn=country_cn,
                 )
 
             role = "manager" if members_info["is_admin"] else "member"
@@ -464,6 +494,8 @@ def _discover_from_cookies(cookies: dict) -> FamilyDiscoverResult:
                 message=f"家庭组: {role}, {members_info['member_count']} 成员",
                 subscription_status=sub_status,
                 subscription_expiry=sub_expiry,
+                country=country,
+                country_cn=country_cn,
             )
     except TokenError:
         return FamilyDiscoverResult(

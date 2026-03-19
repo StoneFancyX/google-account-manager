@@ -43,6 +43,8 @@ class AccountService:
             "family_member_count": family_member_count,
             "subscription_status": account.subscription_status or "",
             "subscription_expiry": account.subscription_expiry or "",
+            "country": account.country or "",
+            "country_cn": account.country_cn or "",
             "has_oauth_credential": bool(account.oauth_credential_json),
             "notes": account.notes or "",
             "created_at": account.created_at.isoformat() if account.created_at else None,

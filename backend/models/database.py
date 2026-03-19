@@ -20,12 +20,18 @@ def ensure_schema_updates() -> None:
             return
 
         columns = {col["name"] for col in inspector.get_columns("accounts")}
-        if "oauth_credential_json" in columns:
-            return
+
+        new_columns = {
+            "oauth_credential_json": "TEXT DEFAULT ''",
+            "country": "VARCHAR DEFAULT ''",
+            "country_cn": "VARCHAR DEFAULT ''",
+        }
 
         with engine.begin() as conn:
-            conn.execute(text("ALTER TABLE accounts ADD COLUMN oauth_credential_json TEXT DEFAULT ''"))
-        logger.info("[schema] 已补齐 accounts.oauth_credential_json")
+            for col_name, col_type in new_columns.items():
+                if col_name not in columns:
+                    conn.execute(text(f"ALTER TABLE accounts ADD COLUMN {col_name} {col_type}"))
+                    logger.info(f"[schema] 已补齐 accounts.{col_name}")
     except Exception as e:
         logger.warning(f"[schema] schema 更新检查失败: {e}")
 

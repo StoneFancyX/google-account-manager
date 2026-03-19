@@ -53,7 +53,17 @@ class BrowserManager:
                 mapping = {}
 
         key = str(profile_id)
-        if key not in mapping:
+        need_new = key not in mapping
+
+        # 已有 mapping 但账号不匹配时，说明 profile 被重新关联了，需要新建目录
+        if not need_new and account_email:
+            email_prefix = account_email.split("@")[0].lower()
+            existing_dir = mapping[key].lower()
+            if email_prefix not in existing_dir:
+                logger.info(f"[browser] profile {profile_id} 账号已变更, 重新分配目录 ({mapping[key]} -> {account_email})")
+                need_new = True
+
+        if need_new:
             prefix = account_email.split("@")[0] if account_email else f"profile{profile_id}"
             prefix = "".join(c if c.isalnum() or c in "._-" else "_" for c in prefix)
             short_id = uuid.uuid4().hex[:8]
@@ -104,9 +114,12 @@ class BrowserManager:
         use_headless = headless if headless is not None else self._is_headless_mode()
 
         co = ChromiumOptions()
-        co.auto_port()  # 每个实例使用独立端口，避免接管已有浏览器
+        # 每个实例使用独立随机端口，避免接管已有浏览器
+        import random
+        port = random.randint(9600, 59600)
+        co.set_address(f"127.0.0.1:{port}")
         co.set_argument("--lang", "en-US")
-        co.set_argument(f"--user-data-dir={data_dir}")
+        co.set_user_data_path(str(data_dir))
         if use_headless:
             co.headless()
 
@@ -238,6 +251,20 @@ def login_sync(page, email: str, password: str, totp_secret: str = "",
 
     Returns: True = 登录成功
     """
+    # 先检测是否已登录 (user-data-dir 保留了上次会话)
+    page.get("https://myaccount.google.com/")
+    time.sleep(3)
+    url = page.url
+    # 已登录会停在 myaccount.google.com, 未登录会重定向到 google.com/account/about 或 accounts.google.com
+    if "myaccount.google.com" in url and "account/about" not in url and "signin" not in url:
+        # 确认是目标账号 (页面上应该有邮箱)
+        page_text = page.html or ""
+        if email.lower() in page_text.lower():
+            logger.info(f"账号已登录 (session 有效), email={email}")
+            return True
+        else:
+            logger.info(f"浏览器已登录其他账号, 继续登录 {email}")
+
     page.get("https://accounts.google.com/signin")
     time.sleep(2)
 
@@ -293,10 +320,29 @@ def login_sync(page, email: str, password: str, totp_secret: str = "",
 
     time.sleep(2)
 
+    # 处理登录后的中间页 (passkey 引导、恢复选项提示等)
+    for _ in range(3):
+        url = page.url
+        if "speedbump" in url or "passkeyenrollment" in url or "signinoptions" in url:
+            # 点击 "以后再说" / "Not now" / "Skip" 跳过
+            skip_btn = (
+                page.ele("text:以后再说", timeout=2)
+                or page.ele("text:Not now", timeout=2)
+                or page.ele("text:Skip", timeout=2)
+                or page.ele("text:稍后再说", timeout=1)
+            )
+            if skip_btn:
+                skip_btn.click()
+                logger.info(f"跳过中间页: {url}")
+                time.sleep(3)
+                continue
+        break
+
     # 登录成功判断: 多种成功后的 URL 模式
     url = page.url
     ok = (
         "myaccount" in url
+        or "speedbump" in url  # passkey 引导页 (跳过按钮可能未点到, 但登录已完成)
         or "accounts.google.com/Default" in url
         or "accounts.google.com/" == url.rstrip("/") + "/"
         or ("signin" not in url and "challenge" not in url and "accounts.google.com" in url)
