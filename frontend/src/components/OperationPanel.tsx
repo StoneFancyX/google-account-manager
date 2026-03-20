@@ -2,6 +2,7 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   Button,
   Input,
+  Select,
   Typography,
   Space,
   App,
@@ -192,6 +193,8 @@ const OperationPanel: React.FC<OperationPanelProps> = ({
   // 子弹窗
   const [activeOp, setActiveOp] = useState<OpDef | null>(null);
   const [formValues, setFormValues] = useState<Record<string, string>>({});
+  // 多邮箱选择 (邀请/移除)
+  const [selectedEmails, setSelectedEmails] = useState<string[]>([]);
 
   const wsRef = useRef<WebSocket | null>(null);
   const stepsEndRef = useRef<HTMLDivElement | null>(null);
@@ -344,22 +347,43 @@ const OperationPanel: React.FC<OperationPanelProps> = ({
     }
     // 有输入字段, 弹出子弹窗
     setFormValues({});
+    setSelectedEmails([]);
     setActiveOp(op);
   };
 
   /** 子弹窗提交 */
   const handleSubModalOk = () => {
     if (!activeOp) return;
-    for (const f of activeOp.fields || []) {
-      if (!formValues[f.name]?.trim()) {
-        msg.warning(`请输入${f.placeholder}`);
+
+    if (activeOp.key === 'family-invite') {
+      if (selectedEmails.length === 0) {
+        msg.warning('请输入至少一个邮箱');
         return;
       }
-    }
-
-    if (activeOp.key === 'replace') {
+      executeViaWs('family-invite', { invite_email: selectedEmails.join(',') });
+    } else if (activeOp.key === 'family-remove') {
+      if (selectedEmails.length === 0) {
+        msg.warning('请输入至少一个邮箱');
+        return;
+      }
+      executeViaWs('family-remove', { member_email: selectedEmails.join(',') });
+    } else if (activeOp.key === 'replace') {
+      if (!formValues.old_email?.trim()) {
+        msg.warning('请输入旧成员邮箱');
+        return;
+      }
+      if (!formValues.new_email?.trim()) {
+        msg.warning('请输入新成员邮箱');
+        return;
+      }
       executeReplace(formValues.old_email.trim(), formValues.new_email.trim());
     } else {
+      for (const f of activeOp.fields || []) {
+        if (!formValues[f.name]?.trim()) {
+          msg.warning(`请输入${f.placeholder}`);
+          return;
+        }
+      }
       const extra: Record<string, string> = {};
       for (const f of activeOp.fields || []) {
         extra[f.name] = formValues[f.name].trim();
@@ -367,6 +391,19 @@ const OperationPanel: React.FC<OperationPanelProps> = ({
       executeViaWs(activeOp.key, extra);
     }
     setActiveOp(null);
+  };
+
+  /** 处理邀请/移除 Select 粘贴: 支持逗号、换行、分号分隔多邮箱 */
+  const handleEmailSearch = (value: string) => {
+    if (/[,;\n\r]/.test(value)) {
+      const emails = value
+        .split(/[,;\n\r\s]+/)
+        .map((e) => e.trim())
+        .filter((e) => e && e.includes('@'));
+      if (emails.length > 0) {
+        setSelectedEmails((prev) => [...new Set([...prev, ...emails])]);
+      }
+    }
   };
 
   const isAnyRunning = runningOp !== null;
@@ -606,22 +643,59 @@ const OperationPanel: React.FC<OperationPanelProps> = ({
         okText="执行"
         cancelText="取消"
         okButtonProps={{ danger: activeOp?.danger }}
-        width={380}
+        width={420}
         destroyOnClose
       >
-        <Space direction="vertical" size={12} style={{ width: '100%', marginTop: 12 }}>
-          {activeOp?.fields?.map((f) => (
-            <Input
-              key={f.name}
-              placeholder={f.placeholder}
-              value={formValues[f.name] || ''}
-              onChange={(e) =>
-                setFormValues((prev) => ({ ...prev, [f.name]: e.target.value }))
-              }
-              onPressEnter={handleSubModalOk}
+        <div style={{ marginTop: 12 }}>
+          {/* 邀请: Select tags 模式，粘贴自动拆分 */}
+          {activeOp?.key === 'family-invite' && (
+            <Select
+              mode="tags"
+              style={{ width: '100%' }}
+              placeholder="输入或粘贴邮箱，回车添加（支持逗号、换行分隔）"
+              value={selectedEmails}
+              onChange={setSelectedEmails}
+              onSearch={handleEmailSearch}
+              tokenSeparators={[',', ';', '\n', '\t', ' ']}
+              open={false}
+              suffixIcon={null}
+              notFoundContent={null}
             />
-          ))}
-        </Space>
+          )}
+
+          {/* 移除: Select tags 模式 */}
+          {activeOp?.key === 'family-remove' && (
+            <Select
+              mode="tags"
+              style={{ width: '100%' }}
+              placeholder="输入或粘贴邮箱，回车添加（支持逗号、换行分隔）"
+              value={selectedEmails}
+              onChange={setSelectedEmails}
+              onSearch={handleEmailSearch}
+              tokenSeparators={[',', ';', '\n', '\t', ' ']}
+              open={false}
+              suffixIcon={null}
+              notFoundContent={null}
+            />
+          )}
+
+          {/* 替换 / 其他操作: 保持 Input 模式 */}
+          {activeOp && !['family-invite', 'family-remove'].includes(activeOp.key) && (
+            <Space direction="vertical" size={12} style={{ width: '100%' }}>
+              {activeOp.fields?.map((f) => (
+                <Input
+                  key={f.name}
+                  placeholder={f.placeholder}
+                  value={formValues[f.name] || ''}
+                  onChange={(e) =>
+                    setFormValues((prev) => ({ ...prev, [f.name]: e.target.value }))
+                  }
+                  onPressEnter={handleSubModalOk}
+                />
+              ))}
+            </Space>
+          )}
+        </div>
       </Modal>
     </div>
   );

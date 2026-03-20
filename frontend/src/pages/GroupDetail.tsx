@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Button,
   Card,
@@ -76,6 +76,14 @@ interface StepMsg {
   duration_ms?: number;
 }
 
+/** 每个账号独立的操作状态 */
+interface AccountOpState {
+  runningOpKey: string | null;
+  steps: StepMsg[];
+  resultMsg: string;
+  resultSuccess: boolean | null;
+}
+
 /** 操作定义 */
 interface OpDef {
   key: string;
@@ -91,9 +99,9 @@ interface OpDef {
 const OPERATIONS: OpDef[] = [
   { key: 'family-discover', label: '同步', icon: <SyncOutlined />, color: '#1677ff', needBrowser: false, role: 'owner' },
   { key: 'family-create', label: '建组', icon: <TeamOutlined />, color: '#722ed1', needBrowser: true, role: 'no-group' },
-  { key: 'family-invite', label: '邀请', icon: <UserAddOutlined />, color: '#13c2c2', needBrowser: true, fields: [{ name: 'invite_email', placeholder: '被邀请人邮箱' }], role: 'owner' },
+  { key: 'family-invite', label: '邀请', icon: <UserAddOutlined />, color: '#13c2c2', needBrowser: true, fields: [{ name: 'invite_email', placeholder: '被邀请人邮箱（多个用逗号或换行分隔）' }], role: 'owner' },
   { key: 'family-accept', label: '接受', icon: <CheckCircleOutlined />, color: '#52c41a', needBrowser: true, role: 'no-group' },
-  { key: 'family-remove', label: '移除', icon: <UserDeleteOutlined />, color: '#ff4d4f', needBrowser: true, fields: [{ name: 'member_email', placeholder: '要移除的成员邮箱' }], danger: true, role: 'owner' },
+  { key: 'family-remove', label: '移除', icon: <UserDeleteOutlined />, color: '#ff4d4f', needBrowser: true, fields: [{ name: 'member_email', placeholder: '要移除的成员邮箱（多个用逗号或换行分隔）' }], danger: true, role: 'owner' },
   { key: 'family-leave', label: '退组', icon: <LogoutOutlined />, color: '#fa8c16', needBrowser: true, danger: true, role: 'member' },
   { key: 'replace', label: '替换', icon: <SwapOutlined />, color: '#722ed1', needBrowser: true, fields: [{ name: 'old_email', placeholder: '旧成员邮箱 (将被移除)' }, { name: 'new_email', placeholder: '新成员邮箱 (将被邀请)' }], role: 'owner' },
 ];
@@ -134,34 +142,27 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, onBack }) => {
   const [browserLoading, setBrowserLoading] = useState<Set<number>>(new Set());
   const [profileMap, setProfileMap] = useState<Record<number, number>>({});
 
-  // 操作状态
-  const [runningAccountId, setRunningAccountId] = useState<number | null>(null);
-  const [runningOpKey, setRunningOpKey] = useState<string | null>(null);
-  const [logAccountId, setLogAccountId] = useState<number | null>(null);
-  const [steps, setSteps] = useState<StepMsg[]>([]);
-  const [resultMsg, setResultMsg] = useState('');
-  const [resultSuccess, setResultSuccess] = useState<boolean | null>(null);
+  // 每个账号独立的操作状态
+  const [opStates, setOpStates] = useState<Record<number, AccountOpState>>({});
 
   // 输入字段弹窗
   const [activeOp, setActiveOp] = useState<OpDef | null>(null);
   const [activeAccountId, setActiveAccountId] = useState<number | null>(null);
   const [formValues, setFormValues] = useState<Record<string, string>>({});
+  // 多选邮箱 (邀请/移除)
+  const [selectedEmails, setSelectedEmails] = useState<string[]>([]);
+  // 替换操作: 旧成员选择 + 新成员输入
+  const [replaceOldEmail, setReplaceOldEmail] = useState<string>('');
+  const [replaceNewEmail, setReplaceNewEmail] = useState<string>('');
 
   // 添加成员
   const [addMemberVisible, setAddMemberVisible] = useState(false);
   const [allAccounts, setAllAccounts] = useState<Account[]>([]);
 
-  const wsRef = useRef<WebSocket | null>(null);
-  const stepsEndRef = useRef<HTMLDivElement | null>(null);
-
   useEffect(() => {
     loadGroup();
     loadBrowserStatus();
   }, [groupId]);
-
-  useEffect(() => {
-    stepsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [steps]);
 
   const loadGroup = async () => {
     setLoading(true);
@@ -266,14 +267,11 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, onBack }) => {
       const trackKey = opKey || action;
       const token = localStorage.getItem('token') || '';
       const ws = new WebSocket(`${WS_URL}?token=${token}`);
-      wsRef.current = ws;
 
-      setRunningAccountId(accountId);
-      setRunningOpKey(trackKey);
-      setSteps([]);
-      setResultMsg('');
-      setResultSuccess(null);
-      setLogAccountId(accountId);
+      setOpStates(prev => ({
+        ...prev,
+        [accountId]: { runningOpKey: trackKey, steps: [], resultMsg: '', resultSuccess: null }
+      }));
 
       ws.onopen = () => {
         ws.send(JSON.stringify({ action, account_id: accountId, ...extra }));
@@ -283,24 +281,33 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, onBack }) => {
         try {
           const data: StepMsg = JSON.parse(e.data);
           if (data.type === 'step') {
-            setSteps((prev) => {
-              if (data.status === 'running') return [...prev, data];
-              const updated = [...prev];
-              let idx = -1;
-              for (let j = updated.length - 1; j >= 0; j--) {
-                if (updated[j].step === data.step) { idx = j; break; }
-              }
-              if (idx >= 0) updated[idx] = data;
-              else updated.push(data);
-              return updated;
+            setOpStates(prev => {
+              const s = prev[accountId];
+              if (!s) return prev;
+              const newSteps = (() => {
+                if (data.status === 'running') return [...s.steps, data];
+                const updated = [...s.steps];
+                let idx = -1;
+                for (let j = updated.length - 1; j >= 0; j--) {
+                  if (updated[j].step === data.step) { idx = j; break; }
+                }
+                if (idx >= 0) updated[idx] = data;
+                else updated.push(data);
+                return updated;
+              })();
+              return { ...prev, [accountId]: { ...s, steps: newSteps } };
             });
           } else if (data.type === 'result') {
-            setRunningAccountId(null);
-            setRunningOpKey(null);
-            const isOk = data.success ?? false;
-            setResultMsg(data.message || '');
-            setResultSuccess(isOk);
-            if (isOk) {
+            setOpStates(prev => ({
+              ...prev,
+              [accountId]: {
+                ...prev[accountId],
+                runningOpKey: null,
+                resultMsg: data.message || '',
+                resultSuccess: data.success ?? false,
+              }
+            }));
+            if (data.success) {
               msg.success(data.message || '操作成功');
               loadGroup();
             } else {
@@ -308,10 +315,15 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, onBack }) => {
             }
             ws.close();
           } else if (data.type === 'error') {
-            setRunningAccountId(null);
-            setRunningOpKey(null);
-            setResultMsg(data.message || '操作异常');
-            setResultSuccess(false);
+            setOpStates(prev => ({
+              ...prev,
+              [accountId]: {
+                ...prev[accountId],
+                runningOpKey: null,
+                resultMsg: data.message || '操作异常',
+                resultSuccess: false,
+              }
+            }));
             msg.error(data.message || '操作异常');
             ws.close();
           }
@@ -319,14 +331,17 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, onBack }) => {
       };
 
       ws.onerror = () => {
-        setRunningAccountId(null);
-        setRunningOpKey(null);
-        setResultMsg('WebSocket 连接失败');
-        setResultSuccess(false);
+        setOpStates(prev => ({
+          ...prev,
+          [accountId]: {
+            ...prev[accountId],
+            runningOpKey: null,
+            resultMsg: 'WebSocket 连接失败',
+            resultSuccess: false,
+          }
+        }));
         msg.error('WebSocket 连接失败');
       };
-
-      ws.onclose = () => { wsRef.current = null; };
     },
     [msg, groupId],
   );
@@ -346,13 +361,18 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, onBack }) => {
       return;
     }
     setFormValues({});
+    setSelectedEmails([]);
+    setReplaceOldEmail('');
+    setReplaceNewEmail('');
     setActiveOp(op);
     setActiveAccountId(accountId);
   };
 
   const handleDiscover = async (accountId: number) => {
-    setRunningAccountId(accountId);
-    setRunningOpKey('family-discover');
+    setOpStates(prev => ({
+      ...prev,
+      [accountId]: { runningOpKey: 'family-discover', steps: [], resultMsg: '', resultSuccess: null }
+    }));
     try {
       const { data } = await discoverFamily(accountId);
       if (data.success) {
@@ -366,28 +386,76 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, onBack }) => {
     } catch (err: any) {
       msg.error(err.response?.data?.detail || '同步请求失败');
     } finally {
-      setRunningAccountId(null);
-      setRunningOpKey(null);
+      setOpStates(prev => ({
+        ...prev,
+        [accountId]: { ...prev[accountId], runningOpKey: null }
+      }));
     }
   };
 
   const handleFieldModalOk = () => {
     if (!activeOp || !activeAccountId) return;
-    for (const f of activeOp.fields || []) {
-      if (!formValues[f.name]?.trim()) {
-        msg.warning(`请输入${f.placeholder}`);
+
+    if (activeOp.key === 'family-invite') {
+      if (selectedEmails.length === 0) {
+        msg.warning('请输入至少一个邮箱');
         return;
       }
-    }
-    if (activeOp.key === 'replace') {
-      executeViaWs(activeAccountId, 'family-replace', { old_email: formValues.old_email.trim(), new_email: formValues.new_email.trim() }, 'replace');
+      executeViaWs(activeAccountId, 'family-batch-invite', { invite_emails: selectedEmails.join(',') }, 'family-invite');
+    } else if (activeOp.key === 'family-remove') {
+      if (selectedEmails.length === 0) {
+        msg.warning('请选择至少一个成员');
+        return;
+      }
+      executeViaWs(activeAccountId, 'family-batch-remove', { member_emails: selectedEmails.join(',') }, 'family-remove');
+    } else if (activeOp.key === 'replace') {
+      if (!replaceOldEmail) {
+        msg.warning('请选择要移除的成员');
+        return;
+      }
+      if (!replaceNewEmail.trim()) {
+        msg.warning('请输入新成员邮箱');
+        return;
+      }
+      executeViaWs(activeAccountId, 'family-replace', { old_email: replaceOldEmail, new_email: replaceNewEmail.trim() }, 'replace');
     } else {
+      for (const f of activeOp.fields || []) {
+        if (!formValues[f.name]?.trim()) {
+          msg.warning(`请输入${f.placeholder}`);
+          return;
+        }
+      }
       const extra: Record<string, string> = {};
       for (const f of activeOp.fields || []) extra[f.name] = formValues[f.name].trim();
       executeViaWs(activeAccountId, activeOp.key, extra, activeOp.key);
     }
     setActiveOp(null);
     setActiveAccountId(null);
+  };
+
+  /** 获取当前操作账号所在家庭组的成员列表（排除操作者自身） */
+  const getMemberOptions = () => {
+    if (!activeAccountId || !group) return [];
+    const activeAccount = (group.accounts || []).find((a) => a.id === activeAccountId);
+    if (!activeAccount) return [];
+    // 获取同一家庭组内的其他成员
+    return (group.accounts || [])
+      .filter((a) => a.id !== activeAccountId && a.family_group_id === activeAccount.family_group_id)
+      .map((a) => ({ label: a.email, value: a.email }));
+  };
+
+  /** 处理邀请 Select 粘贴/输入: 支持逗号、换行、空格分隔多邮箱 */
+  const handleInviteSearch = (value: string) => {
+    // 检测是否粘贴了多邮箱（含逗号、换行、分号）
+    if (/[,;\n\r]/.test(value)) {
+      const emails = value
+        .split(/[,;\n\r\s]+/)
+        .map((e) => e.trim())
+        .filter((e) => e && e.includes('@'));
+      if (emails.length > 0) {
+        setSelectedEmails((prev) => [...new Set([...prev, ...emails])]);
+      }
+    }
   };
 
   const copyToClipboard = (text: string, label: string) => {
@@ -490,15 +558,15 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, onBack }) => {
   const memberAccounts = (group.accounts || [])
     .filter((a) => a.id !== group.main_account_id)
     .sort((a, b) => (a.is_family_pending ? 1 : 0) - (b.is_family_pending ? 1 : 0));
-  const isAnyRunning = runningAccountId !== null;
-
   /** 渲染账号卡片 (主号/子号通用) */
   const renderAccountCard = (record: Account, isMain: boolean) => {
     const isPending = !!record.is_family_pending;
     const isRunning = browserRunning.has(record.id);
     const isBrowserLoading = browserLoading.has(record.id);
     const visibleOps = isPending ? [] : getVisibleOps(record);
-    const isThisAccountRunning = runningAccountId === record.id;
+    const opState = opStates[record.id];
+    const isThisAccountRunning = !!opState?.runningOpKey;
+    const runningOpKey = opState?.runningOpKey || null;
     const memberCount = record.family_member_count ?? 0;
 
     return (
@@ -606,7 +674,7 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, onBack }) => {
                   <Button
                     type="text"
                     size="small"
-                    disabled={isBrowserLoading || isAnyRunning}
+                    disabled={isBrowserLoading || isThisAccountRunning}
                     icon={isBrowserLoading ? <LoadingOutlined style={{ color: '#1677ff' }} />
                       : isRunning ? <PoweroffOutlined style={{ color: '#ff4d4f' }} />
                       : <LoginOutlined style={{ color: '#4285f4' }} />}
@@ -618,13 +686,13 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, onBack }) => {
                   <Button
                     type="text"
                     size="small"
-                    disabled={isAnyRunning || !isRunning}
+                    disabled={isThisAccountRunning || !isRunning}
                     onClick={() => {
                       const acceptOp = OPERATIONS.find(o => o.key === 'family-accept');
                       if (acceptOp) executeViaWs(record.id, 'family-accept', {}, 'family-accept');
                     }}
                     style={{ padding: '0 6px' }}
-                    icon={<CheckCircleOutlined style={{ color: (!isAnyRunning && isRunning) ? '#52c41a' : '#d9d9d9' }} />}
+                    icon={<CheckCircleOutlined style={{ color: (!isThisAccountRunning && isRunning) ? '#52c41a' : '#d9d9d9' }} />}
                   />
                 </Tooltip>
                 <Tag color="orange" style={{ margin: '0 0 0 auto', fontSize: 10, lineHeight: '18px', padding: '0 6px', borderRadius: 4 }}>
@@ -638,7 +706,7 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, onBack }) => {
                   <Button
                     type="text"
                     size="small"
-                    disabled={isBrowserLoading || isAnyRunning}
+                    disabled={isBrowserLoading || isThisAccountRunning}
                     icon={isBrowserLoading ? <LoadingOutlined style={{ color: '#1677ff' }} />
                       : isRunning ? <PoweroffOutlined style={{ color: '#ff4d4f' }} />
                       : <LoginOutlined style={{ color: '#4285f4' }} />}
@@ -692,10 +760,10 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, onBack }) => {
               <Button
                 type="text"
                 size="small"
-                disabled={isAnyRunning || !isRunning}
+                disabled={isThisAccountRunning || !isRunning}
                 icon={(isThisAccountRunning && runningOpKey === 'oauth')
                   ? <LoadingOutlined style={{ color: '#1677ff' }} />
-                  : <SafetyCertificateOutlined style={{ color: (isAnyRunning || !isRunning) ? '#d9d9d9' : '#722ed1' }} />}
+                  : <SafetyCertificateOutlined style={{ color: (isThisAccountRunning || !isRunning) ? '#d9d9d9' : '#722ed1' }} />}
                 onClick={() => handleOAuth(record.id)}
                 style={{ padding: '0 6px' }}
               />
@@ -730,7 +798,7 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, onBack }) => {
             {/* 自动化操作按钮 */}
             {visibleOps.map((op) => {
               const needsBrowser = op.needBrowser !== false;
-              const disabled = isAnyRunning || (needsBrowser && !isRunning);
+              const disabled = isThisAccountRunning || (needsBrowser && !isRunning);
               const isThisOpRunning = isThisAccountRunning && runningOpKey === op.key;
               return (
                 <Tooltip key={op.key} title={op.label}>
@@ -775,15 +843,15 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, onBack }) => {
               lineHeight: '18px',
             }}
           >
-            {logAccountId === record.id ? (
+            {opState ? (
               <>
-                {steps.length === 0 && isThisAccountRunning && (
+                {opState.steps.length === 0 && isThisAccountRunning && (
                   <Flex align="center" gap={6}>
                     <LoadingOutlined style={{ color: '#1677ff', fontSize: 11 }} />
                     <Text type="secondary" style={{ fontSize: 11 }}>等待执行...</Text>
                   </Flex>
                 )}
-                {steps.map((s, i) => (
+                {opState.steps.map((s, i) => (
                   <div key={i} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                     <span style={{
                       color: s.status === 'fail' ? '#ff4d4f'
@@ -797,16 +865,15 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, onBack }) => {
                     {s.duration_ms ? <span style={{ color: '#bbb', marginLeft: 4 }}>({s.duration_ms}ms)</span> : null}
                   </div>
                 ))}
-                {resultMsg && !isThisAccountRunning && (
+                {opState.resultMsg && !isThisAccountRunning && (
                   <div style={{
                     marginTop: 4, padding: '3px 6px', borderRadius: 4, fontSize: 11,
-                    background: resultSuccess ? '#f6ffed' : '#fff2f0',
-                    border: `1px solid ${resultSuccess ? '#b7eb8f' : '#ffa39e'}`,
+                    background: opState.resultSuccess ? '#f6ffed' : '#fff2f0',
+                    border: `1px solid ${opState.resultSuccess ? '#b7eb8f' : '#ffa39e'}`,
                   }}>
-                    {resultMsg}
+                    {opState.resultMsg}
                   </div>
                 )}
-                <div ref={stepsEndRef} />
               </>
             ) : (
               <Flex justify="center" align="center" style={{ height: '100%' }}>
@@ -882,20 +949,75 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, onBack }) => {
         okText="执行"
         cancelText="取消"
         okButtonProps={{ danger: activeOp?.danger }}
-        width={380}
+        width={420}
         destroyOnClose
       >
-        <Space direction="vertical" size={12} style={{ width: '100%', marginTop: 12 }}>
-          {activeOp?.fields?.map((f) => (
-            <Input
-              key={f.name}
-              placeholder={f.placeholder}
-              value={formValues[f.name] || ''}
-              onChange={(e) => setFormValues((prev) => ({ ...prev, [f.name]: e.target.value }))}
-              onPressEnter={handleFieldModalOk}
+        <div style={{ marginTop: 12 }}>
+          {/* 邀请: Select tags 模式，粘贴自动拆分 */}
+          {activeOp?.key === 'family-invite' && (
+            <Select
+              mode="tags"
+              style={{ width: '100%' }}
+              placeholder="输入或粘贴邮箱，回车添加（支持逗号、换行分隔）"
+              value={selectedEmails}
+              onChange={setSelectedEmails}
+              onSearch={handleInviteSearch}
+              tokenSeparators={[',', ';', '\n', '\t', ' ']}
+              open={false}
+              suffixIcon={null}
+              notFoundContent={null}
             />
-          ))}
-        </Space>
+          )}
+
+          {/* 移除: Select 多选，从成员列表选择 */}
+          {activeOp?.key === 'family-remove' && (
+            <Select
+              mode="multiple"
+              style={{ width: '100%' }}
+              placeholder="选择要移除的成员"
+              value={selectedEmails}
+              onChange={setSelectedEmails}
+              options={getMemberOptions()}
+              optionFilterProp="label"
+            />
+          )}
+
+          {/* 替换: 旧成员下拉选择 + 新成员输入 */}
+          {activeOp?.key === 'replace' && (
+            <Space direction="vertical" size={12} style={{ width: '100%' }}>
+              <Select
+                style={{ width: '100%' }}
+                placeholder="选择要移除的旧成员"
+                value={replaceOldEmail || undefined}
+                onChange={setReplaceOldEmail}
+                options={getMemberOptions()}
+                optionFilterProp="label"
+                showSearch
+              />
+              <Input
+                placeholder="新成员邮箱（将被邀请）"
+                value={replaceNewEmail}
+                onChange={(e) => setReplaceNewEmail(e.target.value)}
+                onPressEnter={handleFieldModalOk}
+              />
+            </Space>
+          )}
+
+          {/* 其他操作（如果有 fields，保持原有 Input 模式） */}
+          {activeOp && !['family-invite', 'family-remove', 'replace'].includes(activeOp.key) && (
+            <Space direction="vertical" size={12} style={{ width: '100%' }}>
+              {activeOp.fields?.map((f) => (
+                <Input
+                  key={f.name}
+                  placeholder={f.placeholder}
+                  value={formValues[f.name] || ''}
+                  onChange={(e) => setFormValues((prev) => ({ ...prev, [f.name]: e.target.value }))}
+                  onPressEnter={handleFieldModalOk}
+                />
+              ))}
+            </Space>
+          )}
+        </div>
       </Modal>
 
       {/* 添加成员弹窗 */}

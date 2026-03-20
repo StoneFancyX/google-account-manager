@@ -814,6 +814,57 @@ async def automation_websocket(ws: WebSocket):
                 task = asyncio.ensure_future(
                     run_send_family_invite(profile_id, invite_email, on_step=on_step)
                 )
+            elif action == "family-batch-invite":
+                invite_emails_raw = data.get("invite_emails", "")
+                invite_emails = [e.strip() for e in invite_emails_raw.split(",") if e.strip()]
+                if not invite_emails:
+                    await ws.send_json({"type": "error", "message": "缺少邀请邮箱"})
+                    continue
+
+                total = len(invite_emails)
+                success_count = 0
+                fail_list = []
+
+                for i, invite_email in enumerate(invite_emails):
+                    step_offset = i * 100
+                    def on_step_batch(d, offset=step_offset):
+                        if d.get("step"):
+                            d = {**d, "step": d["step"] + offset}
+                        msg_queue.put(d)
+
+                    on_step_batch({"type": "step", "name": f"--- 邀请 {invite_email} ({i+1}/{total}) ---", "status": "info", "message": invite_email})
+
+                    task = asyncio.ensure_future(
+                        run_send_family_invite(profile_id, invite_email, on_step=on_step_batch)
+                    )
+                    # drain queue while task runs
+                    while not task.done():
+                        try:
+                            m = msg_queue.get_nowait()
+                            if m.get("type") != "result":
+                                await ws.send_json(m)
+                        except queue.Empty:
+                            await asyncio.sleep(0.1)
+                    while not msg_queue.empty():
+                        m = msg_queue.get_nowait()
+                        if m.get("type") != "result":
+                            await ws.send_json(m)
+
+                    invite_result = task.result() if not task.exception() else None
+                    if invite_result and invite_result.success:
+                        success_count += 1
+                        _sync_group_after_action("family-invite", account_id, True, invite_result.message, {"invite_email": invite_email})
+                    else:
+                        err = invite_result.message if invite_result else str(task.exception())
+                        fail_list.append(f"{invite_email}: {err}")
+
+                # 汇总结果
+                if fail_list:
+                    summary = f"批量邀请完成: 成功 {success_count}/{total}, 失败: {'; '.join(fail_list)}"
+                    await ws.send_json({"type": "result", "success": success_count > 0, "message": summary, "duration_ms": 0})
+                else:
+                    await ws.send_json({"type": "result", "success": True, "message": f"批量邀请完成: 全部成功 ({total})", "duration_ms": 0})
+                continue
             elif action == "family-accept":
                 task = asyncio.ensure_future(
                     run_accept_family_invite(profile_id, on_step=on_step)
@@ -826,6 +877,55 @@ async def automation_websocket(ws: WebSocket):
                 task = asyncio.ensure_future(
                     run_remove_family_member(profile_id, member_email, password, totp_secret, on_step=on_step)
                 )
+            elif action == "family-batch-remove":
+                member_emails_raw = data.get("member_emails", "")
+                member_emails = [e.strip() for e in member_emails_raw.split(",") if e.strip()]
+                if not member_emails:
+                    await ws.send_json({"type": "error", "message": "缺少成员邮箱"})
+                    continue
+
+                total = len(member_emails)
+                success_count = 0
+                fail_list = []
+
+                for i, member_email in enumerate(member_emails):
+                    step_offset = i * 100
+                    def on_step_batch(d, offset=step_offset):
+                        if d.get("step"):
+                            d = {**d, "step": d["step"] + offset}
+                        msg_queue.put(d)
+
+                    on_step_batch({"type": "step", "name": f"--- 移除 {member_email} ({i+1}/{total}) ---", "status": "info", "message": member_email})
+
+                    task = asyncio.ensure_future(
+                        run_remove_family_member(profile_id, member_email, password, totp_secret, on_step=on_step_batch)
+                    )
+                    while not task.done():
+                        try:
+                            m = msg_queue.get_nowait()
+                            if m.get("type") != "result":
+                                await ws.send_json(m)
+                        except queue.Empty:
+                            await asyncio.sleep(0.1)
+                    while not msg_queue.empty():
+                        m = msg_queue.get_nowait()
+                        if m.get("type") != "result":
+                            await ws.send_json(m)
+
+                    remove_result = task.result() if not task.exception() else None
+                    if remove_result and remove_result.success:
+                        success_count += 1
+                        _sync_group_after_action("family-remove", account_id, True, remove_result.message, {"member_email": member_email})
+                    else:
+                        err = remove_result.message if remove_result else str(task.exception())
+                        fail_list.append(f"{member_email}: {err}")
+
+                if fail_list:
+                    summary = f"批量移除完成: 成功 {success_count}/{total}, 失败: {'; '.join(fail_list)}"
+                    await ws.send_json({"type": "result", "success": success_count > 0, "message": summary, "duration_ms": 0})
+                else:
+                    await ws.send_json({"type": "result", "success": True, "message": f"批量移除完成: 全部成功 ({total})", "duration_ms": 0})
+                continue
             elif action == "family-leave":
                 task = asyncio.ensure_future(
                     run_leave_family_group(profile_id, password, totp_secret, on_step=on_step)
