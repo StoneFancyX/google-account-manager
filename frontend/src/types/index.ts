@@ -18,6 +18,7 @@ export interface Account {
   country?: string;
   country_cn?: string;
   has_oauth_credential?: boolean;
+  validation_url?: string;
   notes?: string;
   created_at?: string;
   updated_at?: string;

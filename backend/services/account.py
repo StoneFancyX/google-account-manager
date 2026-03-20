@@ -1,4 +1,5 @@
 """账号服务 - 处理账号 CRUD"""
+import json
 from datetime import datetime, timezone
 from typing import List, Dict, Optional
 
@@ -46,10 +47,21 @@ class AccountService:
             "country": account.country or "",
             "country_cn": account.country_cn or "",
             "has_oauth_credential": bool(account.oauth_credential_json),
+            "validation_url": self._get_validation_url(account.oauth_credential_json),
             "notes": account.notes or "",
             "created_at": account.created_at.isoformat() if account.created_at else None,
             "updated_at": account.updated_at.isoformat() if account.updated_at else None,
         }
+
+    def _get_validation_url(self, oauth_json: str) -> str:
+        """从 oauth_credential_json 中提取 validation_url"""
+        if not oauth_json:
+            return ""
+        try:
+            cred = json.loads(oauth_json)
+            return cred.get("validation_url", "")
+        except Exception:
+            return ""
 
     def get_all(
         self, search: str = "", group_filter: str = "", tag_filter: str = "",

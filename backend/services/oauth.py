@@ -15,8 +15,9 @@ import logging
 import re
 import secrets
 import time
+import uuid
 from datetime import datetime, timezone, timedelta
-from typing import Optional
+from typing import Optional, Tuple
 
 import httpx
 import pyotp
@@ -190,6 +191,108 @@ def _onboard_user(access_token: str, tier_id: str = "legacy-tier") -> str:
         time.sleep(2)
 
     return ""
+
+
+# ── API 可用性探测 ─────────────────────────────────────────
+
+ANTIGRAVITY_DAILY_ENDPOINT = "https://daily-cloudcode-pa.googleapis.com"
+ANTIGRAVITY_STREAM_PATH = "/v1internal:streamGenerateContent"
+
+
+def probe_api(access_token: str, project_id: str = "") -> Tuple[bool, str, Optional[str]]:
+    """发送一次简单的 streamGenerateContent 请求来探测 API 是否可用
+
+    返回: (可用?, 消息, 验证链接或None)
+    - 可用: True 表示 API 正常可用
+    - 消息: 成功时为 "API 可用", 失败时为错误详情
+    - 验证链接: 需要验证时返回 validation_url, 否则 None
+    """
+    url = f"{ANTIGRAVITY_DAILY_ENDPOINT}{ANTIGRAVITY_STREAM_PATH}"
+
+    # 构建最小化的 Antigravity 请求
+    request_id = f"agent-{uuid.uuid4()}"
+    session_id = f"-{int(time.time() * 1000)}"
+
+    payload = {
+        "model": "claude-sonnet-4-20250514",
+        "userAgent": "antigravity",
+        "requestType": "agent",
+        "project": project_id or "probe-test-00000",
+        "requestId": request_id,
+        "request": {
+            "sessionId": session_id,
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{"text": "hi"}]
+                }
+            ],
+            "generationConfig": {
+                "maxOutputTokens": 32
+            }
+        }
+    }
+
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json",
+        "User-Agent": API_USER_AGENT,
+        "X-Goog-Api-Client": API_CLIENT,
+        "Client-Metadata": CLIENT_METADATA,
+    }
+
+    try:
+        resp = httpx.post(url, json=payload, headers=headers, timeout=30)
+
+        if resp.status_code == 200:
+            return True, "API 可用", None
+
+        # 解析错误响应 — Google 返回的是 JSON 数组
+        error_text = resp.text
+        logger.warning(f"API 探测失败: HTTP {resp.status_code} - {error_text[:500]}")
+
+        validation_url = _extract_validation_url(error_text)
+        if validation_url:
+            return False, "需要账号验证", validation_url
+
+        return False, f"HTTP {resp.status_code}: {error_text[:500]}", None
+
+    except Exception as e:
+        logger.error(f"API 探测异常: {e}")
+        return False, f"请求异常: {e}", None
+
+
+def _extract_validation_url(error_text: str) -> Optional[str]:
+    """从 Google API 403 错误响应中提取 validation_url
+
+    Google 返回格式:
+    [{"error": {"details": [{"@type": "...ErrorInfo", "metadata": {"validation_url": "..."}}]}}]
+    """
+    try:
+        import json
+        data = json.loads(error_text)
+        # 响应可能是数组或单个对象
+        error_obj = data[0] if isinstance(data, list) else data
+        details = error_obj.get("error", {}).get("details", [])
+        for detail in details:
+            # 从 ErrorInfo 的 metadata 中提取
+            metadata = detail.get("metadata", {})
+            v_url = metadata.get("validation_url")
+            if v_url:
+                return v_url
+            # 从 Help 的 links 中提取
+            for link in detail.get("links", []):
+                link_url = link.get("url", "")
+                if "accounts.google.com" in link_url:
+                    return link_url
+    except Exception:
+        pass
+
+    # JSON 解析失败时回退到正则
+    match = re.search(r'https?://accounts\.google\.com/[^\s"\'<>]+', error_text)
+    if match:
+        return match.group(0).rstrip('.,;!)')
+    return None
 
 
 # ── 浏览器页面交互辅助 ─────────────────────────────────
@@ -453,6 +556,21 @@ def oauth_sync(page, on_step=None, password: str = "", totp_secret: str = ""):
             credential["project_id"] = project_id
 
         tracker.step("认证文件生成", "ok")
+
+        # Step 7: 探测 API 可用性
+        tracker.step("API 探测", "info", "发送测试请求...")
+        try:
+            api_ok, api_msg, validation_url = probe_api(access_token, project_id)
+            if api_ok:
+                tracker.step("API 探测", "ok", "API 可用")
+            else:
+                tracker.step("API 探测", "fail", api_msg)
+                if validation_url:
+                    tracker.step("验证链接", "info", validation_url)
+                    credential["validation_url"] = validation_url
+        except Exception as e:
+            tracker.step("API 探测", "skip", f"探测异常: {e}")
+
         return tracker.result(True, "OAuth 认证成功", extra={"credential": credential})
 
     except Exception as e:

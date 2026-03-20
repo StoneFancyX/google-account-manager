@@ -42,6 +42,7 @@ import {
   SafetyCertificateOutlined,
   DownloadOutlined,
   FileTextOutlined,
+  LinkOutlined,
 } from '@ant-design/icons';
 import {
   getGroup,
@@ -795,6 +796,19 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, onBack }) => {
               </Tooltip>
             )}
 
+            {/* 验证链接复制按钮 */}
+            {record.validation_url && (
+              <Tooltip title="复制验证链接">
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<LinkOutlined style={{ color: '#ff4d4f' }} />}
+                  onClick={() => copyToClipboard(record.validation_url!, '验证链接')}
+                  style={{ padding: '0 6px' }}
+                />
+              </Tooltip>
+            )}
+
             {/* 自动化操作按钮 */}
             {visibleOps.map((op) => {
               const needsBrowser = op.needBrowser !== false;
@@ -861,7 +875,18 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, onBack }) => {
                     }}>
                       {s.name}
                     </span>
-                    {s.message && <span style={{ color: '#999', marginLeft: 6 }}>{s.message}</span>}
+                    {s.message && (
+                      /^https?:\/\//.test(s.message) ? (
+                        <a href={s.message} target="_blank" rel="noopener noreferrer"
+                          style={{ marginLeft: 6, fontSize: 11, color: '#1677ff', wordBreak: 'break-all', whiteSpace: 'normal' }}
+                          title={s.message}
+                        >
+                          {s.message.length > 80 ? s.message.slice(0, 80) + '...' : s.message}
+                        </a>
+                      ) : (
+                        <span style={{ color: '#999', marginLeft: 6 }}>{s.message}</span>
+                      )
+                    )}
                     {s.duration_ms ? <span style={{ color: '#bbb', marginLeft: 4 }}>({s.duration_ms}ms)</span> : null}
                   </div>
                 ))}
