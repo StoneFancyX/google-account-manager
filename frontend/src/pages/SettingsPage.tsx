@@ -3,8 +3,11 @@ import {
   Card,
   Switch,
   Select,
+  Input,
+  Button,
   Typography,
   Space,
+  Flex,
   App,
   Spin,
   Divider,
@@ -17,6 +20,8 @@ import {
   FileTextOutlined,
   EyeInvisibleOutlined,
   PhoneOutlined,
+  CreditCardOutlined,
+  SaveOutlined,
 } from '@ant-design/icons';
 import { getSettings, updateSettings, getSmsProviders, type Settings } from '@/api';
 import type { SmsProviderConfig } from '@/api/sms';
@@ -81,7 +86,7 @@ const SettingsPage: React.FC = () => {
   }
 
   return (
-    <div style={{ maxWidth: 720, flex: 1, overflowY: 'auto' }}>
+    <div style={{ flex: 1, overflowY: 'auto' }}>
       {/* 调试模式 */}
       <Card
         title={
@@ -241,6 +246,95 @@ const SettingsPage: React.FC = () => {
             allowClear
             options={providers.map((p) => ({ value: String(p.id), label: p.name }))}
           />
+        </div>
+      </Card>
+
+      {/* 信用卡配置 (年龄认证用) */}
+      <Card
+        style={{ marginTop: 16 }}
+        title={
+          <Space>
+            <CreditCardOutlined />
+            <span>信用卡配置</span>
+          </Space>
+        }
+      >
+        <div>
+          <Text strong style={{ fontSize: 15 }}>
+            年龄认证信用卡
+          </Text>
+          <Paragraph
+            type="secondary"
+            style={{ marginBottom: 12, marginTop: 4 }}
+          >
+            OAuth 授权前自动年龄认证时使用，填写后自动填卡验证
+          </Paragraph>
+          <Flex gap={12} wrap>
+            <div style={{ flex: 2, minWidth: 180 }}>
+              <Text type="secondary" style={{ fontSize: 12 }}>卡号</Text>
+              <Input
+                placeholder="4111 1111 1111 1111"
+                value={settings?.card_number || ''}
+                onChange={(e) => setSettings((s) => s ? { ...s, card_number: e.target.value } : s)}
+                style={{ marginTop: 4 }}
+              />
+            </div>
+            <div style={{ flex: 1, minWidth: 100 }}>
+              <Text type="secondary" style={{ fontSize: 12 }}>有效期</Text>
+              <Input
+                placeholder="MM/YY"
+                value={settings?.card_expiry || ''}
+                onChange={(e) => setSettings((s) => s ? { ...s, card_expiry: e.target.value } : s)}
+                style={{ marginTop: 4 }}
+              />
+            </div>
+            <div style={{ flex: 1, minWidth: 80 }}>
+              <Text type="secondary" style={{ fontSize: 12 }}>CVV</Text>
+              <Input.Password
+                placeholder="123"
+                value={settings?.card_cvv || ''}
+                onChange={(e) => setSettings((s) => s ? { ...s, card_cvv: e.target.value } : s)}
+                style={{ marginTop: 4 }}
+              />
+            </div>
+            <div style={{ flex: 1, minWidth: 100 }}>
+              <Text type="secondary" style={{ fontSize: 12 }}>邮编</Text>
+              <Input
+                placeholder="10001"
+                value={settings?.card_zip || ''}
+                onChange={(e) => setSettings((s) => s ? { ...s, card_zip: e.target.value } : s)}
+                style={{ marginTop: 4 }}
+              />
+            </div>
+          </Flex>
+          <div style={{ marginTop: 12, textAlign: 'right' }}>
+            <Button
+              type="primary"
+              size="small"
+              icon={<SaveOutlined />}
+              loading={saving}
+              onClick={async () => {
+                if (!settings) return;
+                setSaving(true);
+                try {
+                  const { data } = await updateSettings({
+                    card_number: settings.card_number,
+                    card_expiry: settings.card_expiry,
+                    card_cvv: settings.card_cvv,
+                    card_zip: settings.card_zip,
+                  });
+                  setSettings(data);
+                  message.success('信用卡配置已保存');
+                } catch {
+                  message.error('保存失败');
+                } finally {
+                  setSaving(false);
+                }
+              }}
+            >
+              保存
+            </Button>
+          </div>
         </div>
       </Card>
     </div>

@@ -21,6 +21,10 @@ DEFAULTS = {
     "debug_mode": "false",
     "headless_mode": "false",
     "default_sms_provider_id": "",
+    "card_number": "",
+    "card_expiry": "",
+    "card_cvv": "",
+    "card_zip": "",
 }
 
 
@@ -55,12 +59,20 @@ class SettingsResponse(BaseModel):
     debug_mode: bool
     headless_mode: bool
     default_sms_provider_id: str
+    card_number: str
+    card_expiry: str
+    card_cvv: str
+    card_zip: str
 
 
 class SettingsUpdateRequest(BaseModel):
     debug_mode: Optional[bool] = None
     headless_mode: Optional[bool] = None
     default_sms_provider_id: Optional[str] = None
+    card_number: Optional[str] = None
+    card_expiry: Optional[str] = None
+    card_cvv: Optional[str] = None
+    card_zip: Optional[str] = None
 
 
 # ---- 路由 ----
@@ -72,6 +84,10 @@ def get_settings(db: Session = Depends(get_db)):
         debug_mode=_get(db, "debug_mode") == "true",
         headless_mode=_get(db, "headless_mode") == "true",
         default_sms_provider_id=_get(db, "default_sms_provider_id"),
+        card_number=_get(db, "card_number"),
+        card_expiry=_get(db, "card_expiry"),
+        card_cvv=_get(db, "card_cvv"),
+        card_zip=_get(db, "card_zip"),
     )
 
 
@@ -84,10 +100,21 @@ def update_settings(req: SettingsUpdateRequest, db: Session = Depends(get_db)):
         _set(db, "headless_mode", "true" if req.headless_mode else "false")
     if req.default_sms_provider_id is not None:
         _set(db, "default_sms_provider_id", req.default_sms_provider_id)
+    if req.card_number is not None:
+        _set(db, "card_number", req.card_number)
+    if req.card_expiry is not None:
+        _set(db, "card_expiry", req.card_expiry)
+    if req.card_cvv is not None:
+        _set(db, "card_cvv", req.card_cvv)
+    if req.card_zip is not None:
+        _set(db, "card_zip", req.card_zip)
 
-    # 返回更新后的完整设置
     return SettingsResponse(
         debug_mode=_get(db, "debug_mode") == "true",
         headless_mode=_get(db, "headless_mode") == "true",
         default_sms_provider_id=_get(db, "default_sms_provider_id"),
+        card_number=_get(db, "card_number"),
+        card_expiry=_get(db, "card_expiry"),
+        card_cvv=_get(db, "card_cvv"),
+        card_zip=_get(db, "card_zip"),
     )

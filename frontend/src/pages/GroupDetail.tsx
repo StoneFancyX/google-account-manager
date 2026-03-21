@@ -198,6 +198,7 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, onBack }) => {
   };
 
   const handleLaunchBrowser = async (accountId: number) => {
+    setSelectedAccountId(accountId);
     setBrowserLoading((prev) => new Set(prev).add(accountId));
     try {
       let profileId = profileMap[accountId];
@@ -272,6 +273,9 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, onBack }) => {
       const trackKey = opKey || action;
       const token = localStorage.getItem('token') || '';
       const ws = new WebSocket(`${WS_URL}?token=${token}`);
+
+      // 自动选中该账号的日志面板
+      setSelectedAccountId(accountId);
 
       setOpStates(prev => ({
         ...prev,
@@ -605,11 +609,11 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, onBack }) => {
             <Flex
               align="center" gap={6}
               style={{ flex: 1, minWidth: 0 }}
-              onClick={(e) => { e.stopPropagation(); copyToClipboard(record.email, '邮箱'); }}
             >
               <GoogleOutlined style={{ color: '#4285f4', fontSize: 14, flexShrink: 0 }} />
-              <Tooltip title={record.email}>
-                <Text strong ellipsis style={{ fontSize: 12, maxWidth: '100%' }}>
+              <Tooltip title="点击复制邮箱">
+                <Text strong ellipsis style={{ fontSize: 12, maxWidth: '100%', cursor: 'pointer' }}
+                  onClick={(e) => { e.stopPropagation(); copyToClipboard(record.email, '邮箱'); }}>
                   {masked ? maskEmail(record.email) : record.email}
                 </Text>
               </Tooltip>

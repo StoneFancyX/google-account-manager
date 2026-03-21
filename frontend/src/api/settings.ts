@@ -5,6 +5,10 @@ export interface Settings {
   debug_mode: boolean;
   headless_mode: boolean;
   default_sms_provider_id: string;
+  card_number: string;
+  card_expiry: string;
+  card_cvv: string;
+  card_zip: string;
 }
 
 /** 获取系统设置 */
