@@ -5,13 +5,16 @@
 ## 功能
 
 - **账号管理** — 邮箱 / 密码 / 辅助邮箱 / 2FA 密钥存储，实时生成 TOTP 验证码
-- **分组管理** — 主号 + 子号体系，卡片式分组视图
+- **分组管理** — 主号 + 子号体系，左侧卡片列表 + 右侧日志面板
 - **自动化操作** — 基于 DrissionPage 浏览器自动化 + httpx RPC
   - 一键登录 Google 账号（密码 + 2FA）
   - 创建 / 删除家庭组
-  - 发送 / 接受家庭组邀请
-  - 移除 / 替换家庭组成员
+  - 发送 / 接受家庭组邀请（支持批量邀请、Select tags 粘贴多邮箱）
+  - 移除 / 替换家庭组成员（下拉多选成员列表）
   - 同步家庭组状态（Cookies 过期自动登录刷新）
+- **OAuth 自动授权** — 自动获取 Antigravity OAuth 凭证，API 可用性探测
+- **自动手机号验证** — OAuth 探测到需要验证时，自动购买号码、输入验证码完成 Google 账号验证
+- **接码管理** — 多提供商支持（HeroSMS / SMS-Bus），国家/服务/价格查询，购买/等码/取消/历史记录
 - **订阅检测** — 自动识别 Google One AI Ultra 订阅状态及到期日，主号 Ultra 自动传播给组内子号
 - **WebSocket 实时推送** — 自动化步骤进度实时反馈
 - **调试模式** — 开启后每个自动化步骤自动截图 + 保存页面源码
@@ -43,11 +46,14 @@ backend/
 │   ├── dashboard.py           # 仪表盘
 │   ├── browser.py             # 浏览器配置
 │   ├── automation.py          # 自动化 (REST + WebSocket)
-│   └── settings.py            # 系统设置
+│   ├── settings.py            # 系统设置
+│   └── sms.py                 # 接码管理
 └── services/
     ├── automation.py           # 自动化核心逻辑
     ├── browser.py              # DrissionPage 浏览器管理
     ├── family_api.py           # Google 家庭组 RPC 封装
+    ├── oauth.py                # OAuth 授权 + API 探测 + 自动接码验证
+    ├── sms_api.py              # 接码平台 API (HeroSMS / SMS-Bus)
     └── account.py              # 账号业务逻辑
 
 frontend/src/
@@ -56,7 +62,8 @@ frontend/src/
 │   ├── DashboardPage.tsx      # 仪表盘
 │   ├── AccountsPage.tsx       # 账号管理
 │   ├── GroupManage.tsx         # 分组管理
-│   ├── GroupDetail.tsx         # 分组详情
+│   ├── GroupDetail.tsx         # 分组详情 (左侧卡片 + 右侧日志)
+│   ├── SmsPage.tsx             # 接码管理 (左侧国家 + 右侧历史)
 │   └── SettingsPage.tsx       # 系统设置
 └── layouts/
     └── MainLayout.tsx         # 主布局
