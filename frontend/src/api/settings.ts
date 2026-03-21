@@ -4,6 +4,7 @@ import client, { API_PREFIX } from './client';
 export interface Settings {
   debug_mode: boolean;
   headless_mode: boolean;
+  default_sms_provider_id: string;
 }
 
 /** 获取系统设置 */

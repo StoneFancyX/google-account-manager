@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import {
   Card,
   Switch,
+  Select,
   Typography,
   Space,
   App,
@@ -15,8 +16,10 @@ import {
   CameraOutlined,
   FileTextOutlined,
   EyeInvisibleOutlined,
+  PhoneOutlined,
 } from '@ant-design/icons';
-import { getSettings, updateSettings, type Settings } from '@/api';
+import { getSettings, updateSettings, getSmsProviders, type Settings } from '@/api';
+import type { SmsProviderConfig } from '@/api/sms';
 
 const { Text, Paragraph } = Typography;
 
@@ -25,11 +28,13 @@ const SettingsPage: React.FC = () => {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [providers, setProviders] = useState<SmsProviderConfig[]>([]);
 
   const fetchSettings = async () => {
     try {
-      const { data } = await getSettings();
-      setSettings(data);
+      const [settingsRes, providersRes] = await Promise.all([getSettings(), getSmsProviders()]);
+      setSettings(settingsRes.data);
+      setProviders(providersRes.data);
     } catch {
       message.error('获取设置失败');
     } finally {
@@ -186,6 +191,57 @@ const SettingsPage: React.FC = () => {
             description="新启动的浏览器将在后台运行，不会弹出窗口。已运行的浏览器不受影响，需重新启动才会生效。"
           />
         )}
+      </Card>
+
+      {/* 默认接码提供商 */}
+      <Card
+        style={{ marginTop: 16 }}
+        title={
+          <Space>
+            <PhoneOutlined />
+            <span>默认接码提供商</span>
+          </Space>
+        }
+      >
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+          }}
+        >
+          <div>
+            <Text strong style={{ fontSize: 15 }}>
+              选择默认提供商
+            </Text>
+            <Paragraph
+              type="secondary"
+              style={{ marginBottom: 0, marginTop: 4 }}
+            >
+              自动接码验证时使用的提供商，需先在「接码管理」中添加
+            </Paragraph>
+          </div>
+          <Select
+            style={{ width: 200 }}
+            placeholder="选择提供商"
+            value={settings?.default_sms_provider_id || undefined}
+            onChange={async (val) => {
+              setSaving(true);
+              try {
+                const { data } = await updateSettings({ default_sms_provider_id: val || '' });
+                setSettings(data);
+                message.success('已保存');
+              } catch {
+                message.error('保存失败');
+              } finally {
+                setSaving(false);
+              }
+            }}
+            loading={saving}
+            allowClear
+            options={providers.map((p) => ({ value: String(p.id), label: p.name }))}
+          />
+        </div>
       </Card>
     </div>
   );

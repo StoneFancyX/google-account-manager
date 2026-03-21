@@ -23,7 +23,7 @@ backend/
 ├── run.py                      # 启动入口: uv run python run.py [--reload]
 ├── models/
 │   ├── database.py             # SQLAlchemy 引擎 + SessionLocal
-│   ├── orm.py                  # ORM 模型 (Account, Group, Config, BrowserProfile)
+│   ├── orm.py                  # ORM 模型 (Account, Group, Config, BrowserProfile, SmsProvider, SmsActivation)
 │   └── schemas.py              # Pydantic 请求/响应模型
 ├── routers/
 │   ├── auth.py                 # 认证 API (登录/设置密码)
@@ -32,7 +32,8 @@ backend/
 │   ├── dashboard.py            # 仪表盘 API (统计数据)
 │   ├── browser.py              # 浏览器配置 API (启动/停止/状态)
 │   ├── automation.py           # 自动化 API (REST + WebSocket 实时步骤推送)
-│   └── settings.py             # 系统设置 API (GET/PUT, 存 config 表)
+│   ├── settings.py             # 系统设置 API (GET/PUT, 存 config 表)
+│   └── sms.py                  # 接码管理 API (提供商 CRUD + 购买/查询/取消)
 ├── services/
 │   ├── account.py              # 账号 CRUD 服务
 │   ├── auth.py                 # 认证服务 (密码设置/验证)
@@ -40,6 +41,8 @@ backend/
 │   ├── browser.py              # DrissionPage 浏览器管理 (登录 + rapt 获取)
 │   ├── family_api.py           # Google Family batchexecute RPC 封装 (纯 httpx)
 │   ├── group.py                # 分组 CRUD + 成员管理服务
+│   ├── oauth.py                # OAuth 自动授权 + API 探测 + 自动手机号验证
+│   ├── sms_api.py              # 接码平台 API 封装 (HeroSMS / SMS-Bus 多提供商)
 │   └── verification.py         # 验证链接提取
 └── utils/
     └── crypto.py               # 加密工具
@@ -54,14 +57,16 @@ frontend/src/
 │   ├── dashboard.ts            # 仪表盘 API
 │   ├── browser.ts              # 浏览器管理 API
 │   ├── automation.ts           # 自动化 API
-│   └── settings.ts             # 设置 API
+│   ├── settings.ts             # 设置 API
+│   └── sms.ts                  # 接码管理 API
 ├── pages/
 │   ├── LoginPage.tsx            # 登录页
 │   ├── DashboardPage.tsx        # 仪表盘
 │   ├── AccountsPage.tsx         # 账号管理 (表格 + 操作面板)
 │   ├── GroupManage.tsx           # 分组管理 (卡片列表)
-│   ├── GroupDetail.tsx           # 分组详情 (成员管理)
-│   └── SettingsPage.tsx         # 系统设置 (调试模式 / 无头模式)
+│   ├── GroupDetail.tsx           # 分组详情 (左侧卡片列表 + 右侧日志面板)
+│   ├── SmsPage.tsx              # 接码管理 (左侧国家列表 + 右侧历史记录)
+│   └── SettingsPage.tsx         # 系统设置 (调试模式 / 无头模式 / 默认接码提供商)
 ├── components/
 │   ├── AccountModal.tsx         # 账号编辑弹窗
 │   ├── BrowserProfileModal.tsx  # 浏览器配置弹窗
@@ -133,8 +138,45 @@ cookies 过期时的自动恢复机制 (4 级回退):
 | `leave_family_group_sync()` | 退出/删除家庭组 | rapt + RPC: Csu7b / hQih3e |
 | `discover_family_group_sync()` | 发现家庭组关系 | RPC: V2esPe |
 | `discover_family_by_cookies()` | 纯 cookies 发现 + 自动登录刷新 | httpx + DrissionPage 回退 |
+| `oauth_sync()` | OAuth 自动授权 + API 探测 + 自动接码验证 | DrissionPage + httpx |
+| `auto_phone_verify_sync()` | Google 手机号验证 (接码平台自动完成) | DrissionPage + HeroSMS/SMS-Bus |
 
 每个函数都有对应的异步包装器 `run_xxx()` 用于 API 调用。
+
+### OAuth + 自动手机号验证 (services/oauth.py)
+
+**OAuth 流程:**
+1. 构建 OAuth URL (Antigravity client_id) → 浏览器打开 → 自动同意授权
+2. 提取 authorization code → 交换 access_token + refresh_token
+3. 获取 project_id (loadCodeAssist / onboardUser)
+4. `probe_api()` 向 Antigravity API 发送测试请求 (streamGenerateContent)
+5. 如果返回 403 `VALIDATION_REQUIRED` → 提取 `validation_url` → 自动接码验证
+
+**自动接码验证流程 (auto_phone_verify_sync):**
+1. 打开 `validation_url` → 选择 "Verify your phone number"
+2. 从默认接码提供商购买号码
+3. 输入带 `+` 号的完整号码 (Google 自动切换国家)
+4. 点 Next → 轮询等待验证码 (HeroSMS getStatus)
+5. 输入纯数字验证码 → 点确认
+6. 成功判断: URL 包含 `auth_success` 或 `gemini-code-assist`
+
+**关键选择器:**
+- 手机号输入: `#phoneNumberId`
+- 验证码输入: `#idvAnyPhonePin`
+- 确认按钮: `#idvanyphoneverifyNext`
+
+### 接码管理 (services/sms_api.py)
+
+多提供商抽象架构:
+- `SmsProviderBase` — 抽象基类
+- `HeroSmsProvider` — HeroSMS (SMS-Activate 协议兼容)
+- `SmsBusProvider` — SMS-Bus (独立 REST API)
+- `create_provider(type, api_key)` — 工厂函数
+
+接码 API (routers/sms.py):
+- 提供商 CRUD + 余额查询
+- 购买号码 / 查询状态 / 完成 / 取消
+- 历史记录 + 国家/服务/价格查询
 
 ### 浏览器管理 (services/browser.py)
 
@@ -205,6 +247,7 @@ cookies 过期时的自动恢复机制 (4 级回退):
 |--------|------|
 | `debug_mode` | 调试模式: 自动化步骤详细日志 |
 | `headless_mode` | 无头浏览器模式 (Google 登录不支持，自动登录时强制关闭) |
+| `default_sms_provider_id` | 默认接码提供商 ID |
 
 ## 开发指引
 

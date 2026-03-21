@@ -967,6 +967,16 @@ async def automation_websocket(ws: WebSocket):
                 task = asyncio.ensure_future(
                     run_oauth(profile_id, on_step=on_step, password=password, totp_secret=totp_secret)
                 )
+            elif action == "phone-verify":
+                validation_url = data.get("validation_url", "")
+                if not validation_url:
+                    await ws.send_json({"type": "error", "message": "缺少 validation_url"})
+                    continue
+                from services.oauth import auto_phone_verify_sync
+                loop = asyncio.get_event_loop()
+                task = asyncio.ensure_future(
+                    loop.run_in_executor(None, auto_phone_verify_sync, page, validation_url, on_step)
+                )
             elif action == "family-replace":
                 old_email = data.get("old_email", "")
                 new_email = data.get("new_email", "")

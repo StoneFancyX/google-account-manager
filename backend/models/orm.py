@@ -96,3 +96,42 @@ class BrowserProfile(Base):
 
     # 关系
     account = relationship("Account", back_populates="browser_profiles")
+
+
+class SmsProvider(Base):
+    """接码提供商配置"""
+    __tablename__ = "sms_providers"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String, nullable=False)  # 显示名称, 如 "HeroSMS 主号"
+    provider_type = Column(String, nullable=False, default="herosms")  # herosms / smsbus
+    api_key = Column(Text, default="")
+    default_country = Column(Integer, default=2)  # 该提供商的默认国家
+    default_service = Column(String, default="go")  # 该提供商的默认服务
+    balance = Column(String, default="")  # 缓存余额
+    notes = Column(Text, default="")
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+
+class SmsActivation(Base):
+    """接码记录"""
+    __tablename__ = "sms_activations"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    activation_id = Column(String, nullable=False, index=True)  # HeroSMS 返回的激活 ID
+    provider_id = Column(Integer, ForeignKey("sms_providers.id", ondelete="SET NULL"), nullable=True)  # 关联的提供商
+    phone_number = Column(String, default="")  # 手机号码
+    service = Column(String, default="")  # 服务代码, 如 "go" (Google)
+    country = Column(Integer, default=0)  # 国家 ID
+    country_name = Column(String, default="")  # 国家名称
+    operator = Column(String, default="")  # 运营商
+    cost = Column(String, default="")  # 费用
+    sms_code = Column(String, default="")  # 收到的验证码
+    sms_text = Column(String, default="")  # 完整短信内容
+    status = Column(String, default="pending")  # pending / code_received / finished / cancelled / error
+    account_id = Column(Integer, ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True)  # 关联的账号
+    account_email = Column(String, default="")  # 冗余存储邮箱, 方便查询
+    notes = Column(Text, default="")  # 备注
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))

@@ -7,11 +7,13 @@ import {
   TeamOutlined,
   LogoutOutlined,
   SettingOutlined,
+  PhoneOutlined,
 } from '@ant-design/icons';
 import DashboardPage from '@/pages/DashboardPage';
 import AccountsPage from '@/pages/AccountsPage';
 import GroupManage from '@/pages/GroupManage';
 import SettingsPage from '@/pages/SettingsPage';
+import SmsPage from '@/pages/SmsPage';
 import './MainLayout.css';
 
 const { Header, Sider, Content } = Layout;
@@ -38,6 +40,11 @@ const menuItems = [
     label: '分组管理',
   },
   {
+    key: 'sms',
+    icon: <PhoneOutlined />,
+    label: '接码管理',
+  },
+  {
     key: 'settings',
     icon: <SettingOutlined />,
     label: '系统设置',
@@ -48,6 +55,7 @@ const pageTitles: Record<string, string> = {
   dashboard: '仪表盘',
   accounts: '账号管理',
   groups: '分组管理',
+  sms: '接码管理',
   settings: '系统设置',
 };
 
@@ -116,6 +124,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ onLogout }) => {
             {currentMenu === 'dashboard' && <DashboardPage />}
             {currentMenu === 'accounts' && <AccountsPage />}
             {currentMenu === 'groups' && <GroupManage />}
+            {currentMenu === 'sms' && <SmsPage />}
             {currentMenu === 'settings' && <SettingsPage />}
           </div>
         </Content>

@@ -568,6 +568,28 @@ def oauth_sync(page, on_step=None, password: str = "", totp_secret: str = ""):
                 if validation_url:
                     tracker.step("验证链接", "info", validation_url)
                     credential["validation_url"] = validation_url
+
+                    # Step 8: 自动手机号验证
+                    tracker.step("自动接码验证", "info", "开始自动验证...")
+                    verify_result = auto_phone_verify_sync(page, validation_url, on_step)
+                    if verify_result.get("success"):
+                        tracker.step("自动接码验证", "ok", verify_result.get("message", ""))
+                        # 保存最终页面信息
+                        credential["verify_final_url"] = page.url
+                        try:
+                            page.get_screenshot(".verification_final.png")
+                        except Exception:
+                            pass
+                        # 验证成功后重新探测
+                        tracker.step("重新探测", "info")
+                        api_ok2, api_msg2, _ = probe_api(access_token, project_id)
+                        if api_ok2:
+                            tracker.step("重新探测", "ok", "API 已可用")
+                            credential.pop("validation_url", None)
+                        else:
+                            tracker.step("重新探测", "fail", api_msg2)
+                    else:
+                        tracker.step("自动接码验证", "fail", verify_result.get("message", "验证失败"))
         except Exception as e:
             tracker.step("API 探测", "skip", f"探测异常: {e}")
 
@@ -575,3 +597,176 @@ def oauth_sync(page, on_step=None, password: str = "", totp_secret: str = ""):
 
     except Exception as e:
         return tracker.result(False, f"OAuth 异常: {e}", step="error")
+
+
+# ── 自动手机号验证 ─────────────────────────────────────
+
+def auto_phone_verify_sync(page, validation_url: str, on_step=None) -> dict:
+    """用已登录浏览器自动完成 Google 手机号验证
+
+    流程:
+    1. 打开 validation_url → 选择 "Verify your phone number"
+    2. 从接码平台购买号码
+    3. 输入手机号 → 点 Next
+    4. 轮询等待验证码
+    5. 输入验证码 → 完成
+
+    Args:
+        page: DrissionPage WebPage 实例 (已登录)
+        validation_url: Google 验证链接
+        on_step: 步骤回调
+
+    Returns:
+        {"success": bool, "message": str}
+    """
+    from services.automation import StepTracker
+    from models.database import SessionLocal
+    from models.orm import Config, SmsProvider
+    from services.sms_api import create_provider
+
+    tracker = StepTracker("phone_verify", on_step)
+
+    try:
+        # Step 1: 获取接码提供商
+        tracker.step("获取接码配置", "info")
+        db = SessionLocal()
+        try:
+            # 读取默认提供商
+            row = db.query(Config).filter(Config.key == "default_sms_provider_id").first()
+            provider = None
+            if row:
+                provider = db.query(SmsProvider).get(int(row.value))
+            if not provider:
+                provider = db.query(SmsProvider).first()
+            if not provider or not provider.api_key:
+                return tracker.result(False, "未配置接码提供商", step="sms_config")
+
+            sms_api = create_provider(provider.provider_type, provider.api_key)
+            service = provider.default_service or "go"
+            country = provider.default_country or 2
+            tracker.step("接码配置", "ok", f"{provider.name} | 服务={service} 国家={country}")
+        finally:
+            db.close()
+
+        # Step 2: 打开验证页面
+        tracker.step("打开验证页面", "info")
+        page.get(validation_url)
+        time.sleep(5)
+
+        # Step 3: 选择 "Verify your phone number"
+        if "uplevelingstep/selection" in page.url:
+            tracker.step("选择验证方式", "info", "选择手机号验证")
+            phone_option = None
+            for sel in ["text:Verify your phone number", "text:验证您的电话号码", "text:phone number"]:
+                phone_option = page.ele(sel, timeout=3)
+                if phone_option:
+                    break
+            if not phone_option:
+                return tracker.result(False, "未找到手机验证选项", step="select_method")
+            phone_option.click()
+            time.sleep(4)
+            tracker.step("选择验证方式", "ok")
+
+        # Step 4: 购买号码
+        tracker.step("购买号码", "info", f"服务={service} 国家={country}")
+        ok, number_data = sms_api.get_number(service=service, country=country)
+        if not ok:
+            return tracker.result(False, f"购买号码失败: {number_data}", step="buy_number")
+
+        activation_id = number_data["activation_id"]
+        phone_number = number_data["phone_number"]
+        tracker.step("号码已购买", "ok", phone_number)
+
+        # Step 5: 输入手机号
+        tracker.step("输入手机号", "info", phone_number)
+
+        # 查找手机号输入框
+        phone_input = page.ele("#phoneNumberId", timeout=5) or page.ele("input[type='tel']", timeout=3)
+        if not phone_input:
+            sms_api.cancel(activation_id)
+            return tracker.result(False, "找不到手机号输入框", step="phone_input")
+
+        # 输入带+号的完整号码, Google 会自动切换国家
+        phone_with_plus = f"+{phone_number}" if not phone_number.startswith("+") else phone_number
+        phone_input.clear()
+        phone_input.input(phone_with_plus)
+        time.sleep(1)
+
+        # 点 Next
+        next_btn = (
+            page.ele("text:Next", timeout=3)
+            or page.ele("text:下一步", timeout=2)
+            or page.ele("#next", timeout=2)
+            or page.ele("text:Send", timeout=2)
+        )
+        if next_btn:
+            next_btn.click()
+            time.sleep(4)
+        tracker.step("已发送验证码", "ok")
+
+        # 检查是否有错误 (号码无效等)
+        error_ele = (
+            page.ele("text:This phone number cannot be used", timeout=2)
+            or page.ele("text:didn't recognize", timeout=1)
+            or page.ele("text:无法使用此电话号码", timeout=1)
+        )
+        if error_ele:
+            sms_api.cancel(activation_id)
+            return tracker.result(False, f"号码被拒绝: {phone_number}", step="phone_rejected")
+
+        # Step 6: 等待验证码
+        tracker.step("等待验证码", "info", f"轮询中 (activation={activation_id})")
+        code_ok, code, sms_text = sms_api.wait_for_code(activation_id, timeout=120, interval=5)
+        if not code_ok:
+            sms_api.cancel(activation_id)
+            return tracker.result(False, f"未收到验证码: {sms_text}", step="wait_code")
+        tracker.step("收到验证码", "ok", code)
+
+        # Step 7: 输入验证码
+        tracker.step("输入验证码", "info", code)
+
+        # 查找验证码输入框 (Google 用 #idvAnyPhonePin)
+        code_input = (
+            page.ele("#idvAnyPhonePin", timeout=5)
+            or page.ele("#code", timeout=3)
+            or page.ele("input[type='tel']", timeout=3)
+        )
+        if not code_input:
+            sms_api.finish(activation_id)
+            return tracker.result(False, "找不到验证码输入框", step="code_input")
+
+        code_input.clear()
+        # 输入框预填了 "G-", 只需输入纯数字验证码
+        code_input.input(code)
+        time.sleep(1)
+
+        # 点确认 (Google 用 #idvanyphoneverifyNext)
+        verify_btn = (
+            page.ele("#idvanyphoneverifyNext", timeout=3)
+            or page.ele("text:Next", timeout=2)
+            or page.ele("text:Verify", timeout=2)
+            or page.ele("text:下一步", timeout=2)
+        )
+        if verify_btn:
+            verify_btn.click()
+            time.sleep(5)
+
+        # Step 8: 完成激活
+        sms_api.finish(activation_id)
+        tracker.step("验证完成", "ok")
+
+        # 检查是否成功 (页面跳转到成功页)
+        current_url = page.url
+        if "auth_success" in current_url or "gemini-code-assist" in current_url or "myaccount" in current_url:
+            return tracker.result(True, "手机号验证成功")
+
+        # 可能还在验证页面, 检查是否有错误
+        error_ele2 = page.ele("text:Wrong code", timeout=2) or page.ele("text:验证码错误", timeout=1)
+        if error_ele2:
+            return tracker.result(False, "验证码错误", step="wrong_code")
+
+        # 不确定是否成功, 返回当前 URL
+        return tracker.result(True, f"验证流程已完成, URL: {current_url[:80]}")
+
+    except Exception as e:
+        return tracker.result(False, f"自动验证异常: {e}", step="error")

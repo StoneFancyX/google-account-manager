@@ -13,7 +13,11 @@ SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
 
 def ensure_schema_updates() -> None:
-    """轻量 schema 兼容: 确保新增字段存在"""
+    """轻量 schema 兼容: 确保新增字段/表存在"""
+    from models.orm import Base
+    # 自动创建新表 (不影响已有表)
+    Base.metadata.create_all(bind=engine)
+
     try:
         inspector = inspect(engine)
         if not inspector.has_table("accounts"):

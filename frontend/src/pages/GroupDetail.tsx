@@ -43,6 +43,7 @@ import {
   DownloadOutlined,
   FileTextOutlined,
   LinkOutlined,
+  PhoneOutlined,
 } from '@ant-design/icons';
 import {
   getGroup,
@@ -155,6 +156,9 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, onBack }) => {
   // 替换操作: 旧成员选择 + 新成员输入
   const [replaceOldEmail, setReplaceOldEmail] = useState<string>('');
   const [replaceNewEmail, setReplaceNewEmail] = useState<string>('');
+
+  // 选中的账号 (右侧日志面板)
+  const [selectedAccountId, setSelectedAccountId] = useState<number | null>(null);
 
   // 添加成员
   const [addMemberVisible, setAddMemberVisible] = useState(false);
@@ -559,7 +563,7 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, onBack }) => {
   const memberAccounts = (group.accounts || [])
     .filter((a) => a.id !== group.main_account_id)
     .sort((a, b) => (a.is_family_pending ? 1 : 0) - (b.is_family_pending ? 1 : 0));
-  /** 渲染账号卡片 (主号/子号通用) */
+  /** 渲染账号卡片 (主号/子号通用) - 不含日志区 */
   const renderAccountCard = (record: Account, isMain: boolean) => {
     const isPending = !!record.is_family_pending;
     const isRunning = browserRunning.has(record.id);
@@ -569,35 +573,41 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, onBack }) => {
     const isThisAccountRunning = !!opState?.runningOpKey;
     const runningOpKey = opState?.runningOpKey || null;
     const memberCount = record.family_member_count ?? 0;
+    const isSelected = selectedAccountId === record.id;
 
     return (
-      <div key={record.id} style={{ width: '20%', padding: '0 6px', marginBottom: 12, boxSizing: 'border-box' }}>
+      <div
+        key={record.id}
+        style={{ marginBottom: 6, cursor: 'pointer' }}
+        onClick={() => setSelectedAccountId(record.id)}
+      >
         <Card
           size="small"
           className="hover-card"
           style={{
-            borderRadius: 10,
-            border: isPending
-              ? '1px dashed #ffd591'
-              : isMain
-                ? '1px solid #ffd666'
-                : isRunning
-                  ? '1px solid #91caff'
-                  : '1px solid #f0f0f0',
+            borderRadius: 8,
+            border: isSelected
+              ? '2px solid #1677ff'
+              : isPending
+                ? '1px dashed #ffd591'
+                : isMain
+                  ? '1px solid #ffd666'
+                  : isRunning
+                    ? '1px solid #91caff'
+                    : '1px solid #f0f0f0',
             transition: 'all 0.2s',
-            height: '100%',
             opacity: isPending ? 0.8 : 1,
           }}
-          styles={{ body: { padding: '10px 10px 8px', display: 'flex', flexDirection: 'column', height: '100%' } }}
+          styles={{ body: { padding: '8px 10px 6px' } }}
         >
           {/* 顶部: 邮箱 + 操作 */}
           <Flex justify="space-between" align="flex-start" style={{ marginBottom: 4 }}>
             <Flex
               align="center" gap={6}
-              style={{ flex: 1, minWidth: 0, cursor: 'pointer' }}
-              onClick={() => copyToClipboard(record.email, '邮箱')}
+              style={{ flex: 1, minWidth: 0 }}
+              onClick={(e) => { e.stopPropagation(); copyToClipboard(record.email, '邮箱'); }}
             >
-              <GoogleOutlined style={{ color: '#4285f4', fontSize: 16, flexShrink: 0 }} />
+              <GoogleOutlined style={{ color: '#4285f4', fontSize: 14, flexShrink: 0 }} />
               <Tooltip title={record.email}>
                 <Text strong ellipsis style={{ fontSize: 12, maxWidth: '100%' }}>
                   {masked ? maskEmail(record.email) : record.email}
@@ -607,362 +617,254 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, onBack }) => {
             <Dropdown
               menu={{
                 items: [
-                  ...(isMain ? [] : [
-                    {
-                      key: 'remove-from-group',
-                      icon: <UserDeleteOutlined />,
-                      label: '从分组移除',
-                      danger: true,
-                      onClick: () => handleRemoveFromGroup(record.id),
-                    },
-                  ]),
+                  ...(isMain ? [] : [{
+                    key: 'remove-from-group',
+                    icon: <UserDeleteOutlined />,
+                    label: '从分组移除',
+                    danger: true,
+                    onClick: () => handleRemoveFromGroup(record.id),
+                  }]),
                 ],
               }}
               trigger={['click']}
             >
-              <Button type="text" size="small" icon={<MoreOutlined style={{ color: '#8c8c8c' }} />} style={{ flexShrink: 0, marginLeft: 4 }} />
+              <Button type="text" size="small" icon={<MoreOutlined style={{ color: '#8c8c8c' }} />} style={{ flexShrink: 0 }} onClick={(e) => e.stopPropagation()} />
             </Dropdown>
           </Flex>
 
-          {/* 角色 + 家庭组信息 */}
+          {/* 角色标签 */}
           <Flex gap={4} align="center" wrap style={{ marginBottom: 4 }}>
             {isMain ? (
-              <Tag color="gold" style={{ margin: 0, fontSize: 11, lineHeight: '18px', padding: '0 6px' }}>
-                <CrownOutlined style={{ marginRight: 3 }} />创建者
+              <Tag color="gold" style={{ margin: 0, fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>
+                <CrownOutlined style={{ marginRight: 2 }} />创建者
               </Tag>
             ) : isPending ? (
-              <Tag color="orange" style={{ margin: 0, fontSize: 11, lineHeight: '18px', padding: '0 6px' }}>
-                <ClockCircleOutlined style={{ marginRight: 3 }} />待接受
+              <Tag color="orange" style={{ margin: 0, fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>
+                <ClockCircleOutlined style={{ marginRight: 2 }} />待接受
               </Tag>
             ) : (
-              <Tag color="blue" style={{ margin: 0, fontSize: 11, lineHeight: '18px', padding: '0 6px' }}>
-                <UserOutlined style={{ marginRight: 3 }} />成员
+              <Tag color="blue" style={{ margin: 0, fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>
+                <UserOutlined style={{ marginRight: 2 }} />成员
               </Tag>
             )}
             {isMain && memberCount > 0 && (
-              <Tag color="default" style={{ margin: 0, fontSize: 11, lineHeight: '18px', padding: '0 6px' }}>
-                <TeamOutlined style={{ marginRight: 3 }} />{Math.max(memberCount - 1, 0)}/5
+              <Tag color="default" style={{ margin: 0, fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>
+                <TeamOutlined style={{ marginRight: 2 }} />{Math.max(memberCount - 1, 0)}/5
               </Tag>
             )}
             {record.subscription_status === 'ultra' && (
-              <Tag color="purple" style={{ margin: 0, fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>
-                Ultra
-              </Tag>
+              <Tag color="purple" style={{ margin: 0, fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>Ultra</Tag>
             )}
-            {record.subscription_status === 'ultra' && record.subscription_expiry && (
-              <Tag color="default" style={{ margin: 0, fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>
-                重置于 {record.subscription_expiry}
-              </Tag>
+            {isRunning && (
+              <Tag color="blue" style={{ margin: '0 0 0 auto', fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>运行中</Tag>
+            )}
+            {isThisAccountRunning && (
+              <LoadingOutlined style={{ color: '#1677ff', fontSize: 11, marginLeft: 'auto' }} />
             )}
           </Flex>
-
-          {/* 备注 */}
-          {record.notes && (
-            <Text type="secondary" ellipsis style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>{record.notes}</Text>
-          )}
-
-          {/* 弹性占位 */}
-          <div style={{ flex: 1 }} />
 
           {/* 操作按钮区 */}
-          <Divider style={{ margin: '4px 0 6px' }} />
-          <Flex gap={4} wrap>
-            {/* pending 账号只显示简化操作 */}
+          <Flex gap={3} wrap onClick={(e) => e.stopPropagation()}>
             {isPending ? (
               <>
-                {/* pending 账号仅显示接受邀请按钮(需浏览器) */}
                 <Tooltip title="启动并登录">
-                  <Button
-                    type="text"
-                    size="small"
-                    disabled={isBrowserLoading || isThisAccountRunning}
+                  <Button type="text" size="small" disabled={isBrowserLoading || isThisAccountRunning}
                     icon={isBrowserLoading ? <LoadingOutlined style={{ color: '#1677ff' }} />
                       : isRunning ? <PoweroffOutlined style={{ color: '#ff4d4f' }} />
                       : <LoginOutlined style={{ color: '#4285f4' }} />}
                     onClick={() => isRunning ? handleStopBrowser(record.id) : handleLaunchBrowser(record.id)}
-                    style={{ padding: '0 6px' }}
-                  />
+                    style={{ padding: '0 4px' }} />
                 </Tooltip>
                 <Tooltip title="接受邀请">
-                  <Button
-                    type="text"
-                    size="small"
-                    disabled={isThisAccountRunning || !isRunning}
-                    onClick={() => {
-                      const acceptOp = OPERATIONS.find(o => o.key === 'family-accept');
-                      if (acceptOp) executeViaWs(record.id, 'family-accept', {}, 'family-accept');
-                    }}
-                    style={{ padding: '0 6px' }}
-                    icon={<CheckCircleOutlined style={{ color: (!isThisAccountRunning && isRunning) ? '#52c41a' : '#d9d9d9' }} />}
-                  />
+                  <Button type="text" size="small" disabled={isThisAccountRunning || !isRunning}
+                    onClick={() => executeViaWs(record.id, 'family-accept', {}, 'family-accept')}
+                    style={{ padding: '0 4px' }}
+                    icon={<CheckCircleOutlined style={{ color: (!isThisAccountRunning && isRunning) ? '#52c41a' : '#d9d9d9' }} />} />
                 </Tooltip>
-                <Tag color="orange" style={{ margin: '0 0 0 auto', fontSize: 10, lineHeight: '18px', padding: '0 6px', borderRadius: 4 }}>
-                  邀请中
-                </Tag>
               </>
             ) : (
               <>
-                {/* 浏览器按钮 */}
                 <Tooltip title={isBrowserLoading ? '处理中' : isRunning ? '关闭浏览器' : '启动并登录'}>
-                  <Button
-                    type="text"
-                    size="small"
-                    disabled={isBrowserLoading || isThisAccountRunning}
+                  <Button type="text" size="small" disabled={isBrowserLoading || isThisAccountRunning}
                     icon={isBrowserLoading ? <LoadingOutlined style={{ color: '#1677ff' }} />
                       : isRunning ? <PoweroffOutlined style={{ color: '#ff4d4f' }} />
                       : <LoginOutlined style={{ color: '#4285f4' }} />}
                     onClick={() => isRunning ? handleStopBrowser(record.id) : handleLaunchBrowser(record.id)}
-                    style={{ padding: '0 6px' }}
-                  />
+                    style={{ padding: '0 4px' }} />
                 </Tooltip>
-
-            {/* 复制 2FA 验证码按钮 */}
-            {record.totp_secret && (
-              <Tooltip title="复制 2FA 验证码">
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<CopyOutlined style={{ color: '#52c41a' }} />}
-                  onClick={() => copyTOTPCode(record.id)}
-                  style={{ padding: '0 6px' }}
-                />
-              </Tooltip>
-            )}
-
-            {/* 复制密码按钮 */}
-            {record.password && (
-              <Tooltip title="复制密码">
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<CopyOutlined style={{ color: '#faad14' }} />}
-                  onClick={() => copyToClipboard(record.password, '密码')}
-                  style={{ padding: '0 6px' }}
-                />
-              </Tooltip>
-            )}
-
-            {/* 清除浏览器数据按钮 */}
-            {profileMap[record.id] && (
-              <Tooltip title="清除浏览器数据">
-                <Button
-                  type="text"
-                  size="small"
-                  disabled={isRunning}
-                  icon={<DeleteOutlined style={{ color: isRunning ? '#d9d9d9' : '#ff4d4f' }} />}
-                  onClick={() => handleClearBrowserData(record.id)}
-                  style={{ padding: '0 6px' }}
-                />
-              </Tooltip>
-            )}
-
-            {/* OAuth 授权按钮 */}
-            <Tooltip title="OAuth 授权">
-              <Button
-                type="text"
-                size="small"
-                disabled={isThisAccountRunning || !isRunning}
-                icon={(isThisAccountRunning && runningOpKey === 'oauth')
-                  ? <LoadingOutlined style={{ color: '#1677ff' }} />
-                  : <SafetyCertificateOutlined style={{ color: (isThisAccountRunning || !isRunning) ? '#d9d9d9' : '#722ed1' }} />}
-                onClick={() => handleOAuth(record.id)}
-                style={{ padding: '0 6px' }}
-              />
-            </Tooltip>
-
-            {/* OAuth 复制 JSON 按钮 */}
-            {record.has_oauth_credential && (
-              <Tooltip title="复制 OAuth JSON">
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<FileTextOutlined style={{ color: '#1890ff' }} />}
-                  onClick={() => handleCopyOAuthJson(record.id)}
-                  style={{ padding: '0 6px' }}
-                />
-              </Tooltip>
-            )}
-
-            {/* OAuth 下载按钮 */}
-            {record.has_oauth_credential && (
-              <Tooltip title="下载 OAuth 凭证">
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<DownloadOutlined style={{ color: '#13c2c2' }} />}
-                  onClick={() => handleDownloadOAuth(record.id)}
-                  style={{ padding: '0 6px' }}
-                />
-              </Tooltip>
-            )}
-
-            {/* 验证链接复制按钮 */}
-            {record.validation_url && (
-              <Tooltip title="复制验证链接">
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<LinkOutlined style={{ color: '#ff4d4f' }} />}
-                  onClick={() => copyToClipboard(record.validation_url!, '验证链接')}
-                  style={{ padding: '0 6px' }}
-                />
-              </Tooltip>
-            )}
-
-            {/* 自动化操作按钮 */}
-            {visibleOps.map((op) => {
-              const needsBrowser = op.needBrowser !== false;
-              const disabled = isThisAccountRunning || (needsBrowser && !isRunning);
-              const isThisOpRunning = isThisAccountRunning && runningOpKey === op.key;
-              return (
-                <Tooltip key={op.key} title={op.label}>
-                  <Button
-                    type="text"
-                    size="small"
-                    disabled={disabled && !isThisOpRunning}
-                    onClick={() => handleOpClick(record.id, op)}
-                    style={{ padding: '0 6px' }}
-                    icon={isThisOpRunning
-                      ? <LoadingOutlined style={{ color: '#1677ff' }} />
-                      : React.cloneElement(op.icon as React.ReactElement<any>, {
-                          style: { color: disabled ? '#d9d9d9' : op.color },
-                        })}
-                  />
+                {record.totp_secret && (
+                  <Tooltip title="复制 2FA"><Button type="text" size="small" icon={<CopyOutlined style={{ color: '#52c41a' }} />} onClick={() => copyTOTPCode(record.id)} style={{ padding: '0 4px' }} /></Tooltip>
+                )}
+                {record.password && (
+                  <Tooltip title="复制密码"><Button type="text" size="small" icon={<CopyOutlined style={{ color: '#faad14' }} />} onClick={() => copyToClipboard(record.password, '密码')} style={{ padding: '0 4px' }} /></Tooltip>
+                )}
+                {profileMap[record.id] && (
+                  <Tooltip title="清除浏览器数据"><Button type="text" size="small" disabled={isRunning} icon={<DeleteOutlined style={{ color: isRunning ? '#d9d9d9' : '#ff4d4f' }} />} onClick={() => handleClearBrowserData(record.id)} style={{ padding: '0 4px' }} /></Tooltip>
+                )}
+                <Tooltip title="OAuth 授权">
+                  <Button type="text" size="small" disabled={isThisAccountRunning || !isRunning}
+                    icon={(isThisAccountRunning && runningOpKey === 'oauth') ? <LoadingOutlined style={{ color: '#1677ff' }} /> : <SafetyCertificateOutlined style={{ color: (isThisAccountRunning || !isRunning) ? '#d9d9d9' : '#722ed1' }} />}
+                    onClick={() => handleOAuth(record.id)} style={{ padding: '0 4px' }} />
                 </Tooltip>
-              );
-            })}
-
-            {/* 运行中标签 */}
-            {isRunning && (
-              <Tag color="blue" style={{ margin: '0 0 0 auto', fontSize: 10, lineHeight: '18px', padding: '0 6px', borderRadius: 4 }}>
-                运行中
-              </Tag>
-            )}
+                {record.has_oauth_credential && (
+                  <>
+                    <Tooltip title="复制 OAuth JSON"><Button type="text" size="small" icon={<FileTextOutlined style={{ color: '#1890ff' }} />} onClick={() => handleCopyOAuthJson(record.id)} style={{ padding: '0 4px' }} /></Tooltip>
+                    <Tooltip title="下载 OAuth 凭证"><Button type="text" size="small" icon={<DownloadOutlined style={{ color: '#13c2c2' }} />} onClick={() => handleDownloadOAuth(record.id)} style={{ padding: '0 4px' }} /></Tooltip>
+                  </>
+                )}
+                {record.validation_url && (
+                  <>
+                    <Tooltip title="复制验证链接"><Button type="text" size="small" icon={<LinkOutlined style={{ color: '#ff4d4f' }} />} onClick={() => copyToClipboard(record.validation_url!, '验证链接')} style={{ padding: '0 4px' }} /></Tooltip>
+                    <Tooltip title="自动接码验证">
+                      <Button type="text" size="small" disabled={isThisAccountRunning || !isRunning}
+                        icon={(isThisAccountRunning && runningOpKey === 'phone-verify') ? <LoadingOutlined style={{ color: '#1677ff' }} /> : <PhoneOutlined style={{ color: (isThisAccountRunning || !isRunning) ? '#d9d9d9' : '#fa8c16' }} />}
+                        onClick={() => { if (!isRunning) { msg.warning('请先启动浏览器'); return; } executeViaWs(record.id, 'phone-verify', { validation_url: record.validation_url! }, 'phone-verify'); }}
+                        style={{ padding: '0 4px' }} />
+                    </Tooltip>
+                  </>
+                )}
+                {visibleOps.map((op) => {
+                  const needsBrowser = op.needBrowser !== false;
+                  const disabled = isThisAccountRunning || (needsBrowser && !isRunning);
+                  const isThisOpRunning = isThisAccountRunning && runningOpKey === op.key;
+                  return (
+                    <Tooltip key={op.key} title={op.label}>
+                      <Button type="text" size="small" disabled={disabled && !isThisOpRunning}
+                        onClick={() => handleOpClick(record.id, op)} style={{ padding: '0 4px' }}
+                        icon={isThisOpRunning ? <LoadingOutlined style={{ color: '#1677ff' }} />
+                          : React.cloneElement(op.icon as React.ReactElement<any>, { style: { color: disabled ? '#d9d9d9' : op.color } })} />
+                    </Tooltip>
+                  );
+                })}
               </>
             )}
           </Flex>
-
-          {/* 内嵌日志区 */}
-          <div
-            style={{
-              marginTop: 6,
-              background: '#fafafa',
-              border: '1px solid #f0f0f0',
-              borderRadius: 6,
-              padding: '6px 8px',
-              height: 100,
-              overflowY: 'auto',
-              fontFamily: "'SF Mono', Consolas, monospace",
-              fontSize: 11,
-              lineHeight: '18px',
-            }}
-          >
-            {opState ? (
-              <>
-                {opState.steps.length === 0 && isThisAccountRunning && (
-                  <Flex align="center" gap={6}>
-                    <LoadingOutlined style={{ color: '#1677ff', fontSize: 11 }} />
-                    <Text type="secondary" style={{ fontSize: 11 }}>等待执行...</Text>
-                  </Flex>
-                )}
-                {opState.steps.map((s, i) => (
-                  <div key={i} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    <span style={{
-                      color: s.status === 'fail' ? '#ff4d4f'
-                        : s.status === 'ok' ? '#52c41a'
-                        : s.status === 'skip' ? '#faad14'
-                        : '#333',
-                    }}>
-                      {s.name}
-                    </span>
-                    {s.message && (
-                      /^https?:\/\//.test(s.message) ? (
-                        <a href={s.message} target="_blank" rel="noopener noreferrer"
-                          style={{ marginLeft: 6, fontSize: 11, color: '#1677ff', wordBreak: 'break-all', whiteSpace: 'normal' }}
-                          title={s.message}
-                        >
-                          {s.message.length > 80 ? s.message.slice(0, 80) + '...' : s.message}
-                        </a>
-                      ) : (
-                        <span style={{ color: '#999', marginLeft: 6 }}>{s.message}</span>
-                      )
-                    )}
-                    {s.duration_ms ? <span style={{ color: '#bbb', marginLeft: 4 }}>({s.duration_ms}ms)</span> : null}
-                  </div>
-                ))}
-                {opState.resultMsg && !isThisAccountRunning && (
-                  <div style={{
-                    marginTop: 4, padding: '3px 6px', borderRadius: 4, fontSize: 11,
-                    background: opState.resultSuccess ? '#f6ffed' : '#fff2f0',
-                    border: `1px solid ${opState.resultSuccess ? '#b7eb8f' : '#ffa39e'}`,
-                  }}>
-                    {opState.resultMsg}
-                  </div>
-                )}
-              </>
-            ) : (
-              <Flex justify="center" align="center" style={{ height: '100%' }}>
-                <Text type="secondary" style={{ fontSize: 11, color: '#d9d9d9' }}>暂无日志</Text>
-              </Flex>
-            )}
-          </div>
         </Card>
       </div>
     );
   };
 
+  /** 渲染右侧日志面板 */
+  const renderLogPanel = () => {
+    const opState = selectedAccountId ? opStates[selectedAccountId] : null;
+    const selectedAccount = selectedAccountId
+      ? (group?.accounts || []).find((a) => a.id === selectedAccountId)
+      : null;
+
+    return (
+      <div style={{
+        flex: 1, display: 'flex', flexDirection: 'column',
+        border: '1px solid #f0f0f0', borderRadius: 8, background: '#fff',
+        minHeight: 0,
+      }}>
+        {/* 日志头部 */}
+        <div style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0', flexShrink: 0 }}>
+          {selectedAccount ? (
+            <Flex align="center" gap={6}>
+              <GoogleOutlined style={{ color: '#4285f4', fontSize: 14 }} />
+              <Text strong style={{ fontSize: 13 }}>{selectedAccount.email}</Text>
+              {opState?.runningOpKey && <Tag color="processing" style={{ margin: 0 }}>{opState.runningOpKey}</Tag>}
+            </Flex>
+          ) : (
+            <Text type="secondary" style={{ fontSize: 12 }}>点击左侧卡片查看日志</Text>
+          )}
+        </div>
+        {/* 日志内容 */}
+        <div style={{
+          flex: 1, overflowY: 'auto', padding: '8px 12px',
+          fontFamily: "'SF Mono', Consolas, monospace", fontSize: 12, lineHeight: '20px',
+        }}>
+          {opState ? (
+            <>
+              {opState.steps.length === 0 && opState.runningOpKey && (
+                <Flex align="center" gap={6}>
+                  <LoadingOutlined style={{ color: '#1677ff', fontSize: 12 }} />
+                  <Text type="secondary" style={{ fontSize: 12 }}>等待执行...</Text>
+                </Flex>
+              )}
+              {opState.steps.map((s, i) => (
+                <div key={i} style={{ marginBottom: 2 }}>
+                  <span style={{
+                    color: s.status === 'fail' ? '#ff4d4f'
+                      : s.status === 'ok' ? '#52c41a'
+                      : s.status === 'skip' ? '#faad14'
+                      : '#333',
+                    fontWeight: 500,
+                  }}>
+                    {s.name}
+                  </span>
+                  {s.message && (
+                    /^https?:\/\//.test(s.message) ? (
+                      <a href={s.message} target="_blank" rel="noopener noreferrer"
+                        style={{ marginLeft: 8, fontSize: 11, color: '#1677ff', wordBreak: 'break-all' }}
+                        title={s.message}>
+                        {s.message.length > 60 ? s.message.slice(0, 60) + '...' : s.message}
+                      </a>
+                    ) : (
+                      <span style={{ color: '#999', marginLeft: 8 }}>{s.message}</span>
+                    )
+                  )}
+                  {s.duration_ms ? <span style={{ color: '#bbb', marginLeft: 6 }}>({s.duration_ms}ms)</span> : null}
+                </div>
+              ))}
+              {opState.resultMsg && !opState.runningOpKey && (
+                <div style={{
+                  marginTop: 8, padding: '6px 10px', borderRadius: 6, fontSize: 12,
+                  background: opState.resultSuccess ? '#f6ffed' : '#fff2f0',
+                  border: `1px solid ${opState.resultSuccess ? '#b7eb8f' : '#ffa39e'}`,
+                }}>
+                  {opState.resultMsg}
+                </div>
+              )}
+            </>
+          ) : (
+            <Flex justify="center" align="center" style={{ height: '100%' }}>
+              <Text type="secondary" style={{ color: '#d9d9d9' }}>暂无日志</Text>
+            </Flex>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  // 卡片列表: 主号在前
+  const cardAccounts = [
+    ...(mainAccount ? [mainAccount] : []),
+    ...memberAccounts,
+  ];
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       {/* 顶部: 返回 + 分组信息 */}
-      <Flex align="center" gap={12} style={{ marginBottom: 20, flexShrink: 0 }}>
+      <Flex align="center" gap={12} style={{ marginBottom: 12, flexShrink: 0 }}>
         <Button type="text" icon={<ArrowLeftOutlined />} onClick={onBack} />
         <TeamOutlined style={{ color: '#722ed1', fontSize: 20 }} />
-        <Text strong style={{ fontSize: 16 }}>
-          {group.name}
-        </Text>
+        <Text strong style={{ fontSize: 16 }}>{group.name}</Text>
         <Tag color="default" style={{ fontSize: 12 }}>
           {Math.max((group.accounts || []).length - 1, 0)} 个子号
         </Tag>
-        {group.notes && (
-          <Text type="secondary" style={{ fontSize: 12 }}>{group.notes}</Text>
-        )}
+        {group.notes && <Text type="secondary" style={{ fontSize: 12 }}>{group.notes}</Text>}
         <div style={{ flex: 1 }} />
         <Tooltip title={masked ? '显示邮箱' : '隐藏邮箱'}>
           <Button type="text" icon={masked ? <EyeInvisibleOutlined /> : <EyeOutlined />} onClick={() => setMasked((v) => !v)} />
         </Tooltip>
       </Flex>
 
-      {/* 内容区 - 可滚动 */}
-      <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', minHeight: 0 }}>
-        <Spin spinning={loading}>
-          {/* 主号区域 */}
-          {mainAccount && (
-            <>
-              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 6, paddingLeft: 4 }}>
-                <CrownOutlined style={{ marginRight: 4 }} />主号
-              </Text>
-              <div style={{ display: 'flex', flexWrap: 'wrap', margin: '0 -6px', marginBottom: 16 }}>
-                {renderAccountCard(mainAccount, true)}
-              </div>
-            </>
-          )}
+      {/* 主体: 左侧卡片列表 + 右侧日志 */}
+      <div style={{ flex: 1, display: 'flex', gap: 12, minHeight: 0 }}>
+        {/* 左侧: 卡片列表 */}
+        <div style={{ width: 380, flexShrink: 0, overflowY: 'auto' }}>
+          <Spin spinning={loading}>
+            {cardAccounts.length > 0 ? (
+              cardAccounts.map((acc) => renderAccountCard(acc, acc.id === group.main_account_id))
+            ) : (
+              <Empty description="暂无成员" style={{ marginTop: 60 }} />
+            )}
+          </Spin>
+        </div>
 
-          {/* 成员区域 (子号 + 待接受) */}
-          {memberAccounts.length > 0 && (
-            <>
-              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 6, paddingLeft: 4 }}>
-                <UserOutlined style={{ marginRight: 4 }} />成员 ({memberAccounts.length})
-              </Text>
-              <div style={{ display: 'flex', flexWrap: 'wrap', margin: '0 -6px' }}>
-                {memberAccounts.map((acc) => renderAccountCard(acc, false))}
-              </div>
-            </>
-          )}
-
-          {!mainAccount && memberAccounts.length === 0 && (
-            <Empty description="暂无成员" style={{ marginTop: 60 }} />
-          )}
-        </Spin>
+        {/* 右侧: 日志面板 */}
+        {renderLogPanel()}
       </div>
 
       {/* 输入字段弹窗 */}

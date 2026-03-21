@@ -6,4 +6,5 @@ export * from './dashboard';
 export * from './browser';
 export * from './automation';
 export * from './settings';
+export * from './sms';
 export { default as client } from './client';
